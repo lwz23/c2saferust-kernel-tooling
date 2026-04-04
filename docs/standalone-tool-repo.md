@@ -74,6 +74,25 @@ python3 <tool-repo>/scripts/c2saferust/tool_cli.py refresh-artifacts \
   --module-path <drivers/.../foo.c>
 ```
 
+## 当前验证状态
+
+截至 2026-04-04，这个“独立工具仓库 + 外部 Linux worktree”分离模式已经完成两轮
+真实回放：
+
+- `et1011c`
+  - fresh external tree 完成 artifact refresh
+  - `verify-safety` 通过
+  - `gate-agent-candidate` 通过
+  - `run-oracle` 通过
+- `nlmon`
+  - fresh external tree 完成 Kbuild / bindings / helpers / abstraction / driver replay
+  - `verify-safety` 通过
+  - `gate-agent-candidate` 通过
+  - `run-oracle` 通过
+  - QEMU `ip link add/up/show/down/del nlmon0` smoke 闭环通过
+
+这意味着当前仓库已经不只是“理论上可拆”，而是已经被外部树回放实证过。
+
 ## 推荐拆库形态
 
 推荐采用：
