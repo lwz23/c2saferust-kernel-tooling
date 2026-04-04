@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-rule-pack",
+  "rule_pack_id": "net_link_type_core_safety",
+  "analysis": {
+    "evidence_context_paths": {
+      "required_callbacks": "mvp_scope.required_callbacks",
+      "validate_checks": "source_inventory.validate_checks",
+      "open_tap_assignments": "source_inventory.open_tap_assignments",
+      "open_and_stop_calls": [
+        "source_inventory.open_calls",
+        "source_inventory.stop_calls"
+      ],
+      "stats_calls": "source_inventory.stats_calls",
+      "xmit_calls": "source_inventory.xmit_calls"
+    },
+    "unsafe_site_matchers": [
+      {
+        "id": "rtnl-registration-lifetime",
+        "file_suffix": "rust/kernel/net/rtnl.rs",
+        "excerpt_contains_any": [
+          "rtnl_link_register",
+          "rtnl_link_unregister",
+          "rtnl_link_ops"
+        ],
+        "obligation_ids": [
+          "rtnl-registration-lifetime"
+        ]
+      },
+      {
+        "id": "rtnl-callback-pointer-aliasing",
+        "file_suffix": "rust/kernel/net/rtnl.rs",
+        "excerpt_contains_any": [
+          "Device::from_raw",
+          "ExtAck::from_raw",
+          "unsafe fn from_raw"
+        ],
+        "obligation_ids": [
+          "callback-pointer-aliasing"
+        ]
+      },
+      {
+        "id": "netdevice-private-layout",
+        "file_suffix": "rust/kernel/net/netdevice.rs",
+        "excerpt_contains_any": [
+          "private_ptr",
+          "netdev_priv"
+        ],
+        "obligation_ids": [
+          "netdev-private-layout"
+        ]
+      },
+      {
+        "id": "netdevice-callback-pointer-aliasing",
+        "file_suffix": "rust/kernel/net/netdevice.rs",
+        "excerpt_contains_any": [
+          "from_raw",
+          "private_ptr",
+          "Pin::new_unchecked"
+        ],
+        "obligation_ids": [
+          "callback-pointer-aliasing"
+        ]
+      },
+      {
+        "id": "netdevice-skb-consumed-once",
+        "file_suffix": "rust/kernel/net/netdevice.rs",
+        "excerpt_contains_any": [
+          "from_raw_ref",
+          "SkBuff::from_raw_owned",
+          "TxOutcome::Busy"
+        ],
+        "obligation_ids": [
+          "skb-consumed-once"
+        ]
+      },
+      {
+        "id": "stats-callback-pointer-aliasing",
+        "file_suffix": "rust/kernel/net/stats.rs",
+        "excerpt_contains_any": [
+          "rust_helper_dev_lstats_add",
+          "dev_lstats_add"
+        ],
+        "obligation_ids": [
+          "callback-pointer-aliasing"
+        ]
+      },
+      {
+        "id": "skbuff-consumed-once",
+        "file_suffix": "rust/kernel/net/skbuff.rs",
+        "excerpt_contains_any": [
+          "from_raw_owned",
+          "into_raw",
+          "dev_kfree_skb",
+          "rust_helper_dev_kfree_skb",
+          "NonNull::new_unchecked",
+          "self.ptr()).len"
+        ],
+        "obligation_ids": [
+          "skb-consumed-once"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "soundness_rule_templates": {
+      "typed-link-attr-api": {
+        "linked_obligation_ids": [
+          "validate-attribute-indexing"
+        ],
+        "file": "rust/kernel/net/rtnl.rs",
+        "must_contain": [
+          "pub struct LinkAttr",
+          "pub struct InfoAttr",
+          "pub fn has_link_attr(&self, attr: LinkAttr) -> bool",
+          "pub fn has_info_attr(&self, attr: InfoAttr) -> bool",
+          "const LINK_ATTR_TABLE_LEN: usize = bindings::__IFLA_MAX as usize;",
+          "const INFO_ATTR_TABLE_LEN: usize = bindings::__IFLA_INFO_MAX as usize;"
+        ],
+        "must_not_contain": [
+          "pub fn has_link_attr(&self, attr: usize)",
+          "pub fn has_data_attr(&self, attr: usize)"
+        ]
+      },
+      "private-state-no-drop": {
+        "linked_obligation_ids": [
+          "netdev-private-zero-init",
+          "netdev-private-layout"
+        ],
+        "file": "rust/kernel/net/rtnl.rs",
+        "must_contain": [
+          "build_assert!(!core::mem::needs_drop::<T::Private>())"
+        ],
+        "must_not_contain": []
+      },
+      "shared-xmit-device-api": {
+        "linked_obligation_ids": [
+          "callback-pointer-aliasing",
+          "skb-consumed-once"
+        ],
+        "file": "rust/kernel/net/netdevice.rs",
+        "must_contain": [
+          "fn start_xmit(skb: skbuff::SkBuff, dev: &Device) -> TxOutcome;",
+          "extern \"C\" fn start_xmit_callback(",
+          "let dev = unsafe { Device::from_raw_ref(dev) };",
+          "let skb = unsafe { skbuff::SkBuff::from_raw_owned(skb) };",
+          "pub(crate) fn as_ptr(&self) -> *mut bindings::net_device {",
+          "TxOutcome::Busy(skb) =>"
+        ],
+        "must_not_contain": [
+          "fn start_xmit(skb: skbuff::SkBuff, dev: &mut Device) -> TxOutcome;",
+          "pub fn as_ptr(&self) -> *mut bindings::net_device {"
+        ]
+      },
+      "move-only-skb-api": {
+        "linked_obligation_ids": [
+          "skb-consumed-once"
+        ],
+        "file": "rust/kernel/net/skbuff.rs",
+        "must_contain": [
+          "pub struct SkBuff",
+          "pub(crate) unsafe fn from_raw_owned",
+          "pub(crate) fn into_raw(mut self) -> *mut bindings::sk_buff",
+          "impl Drop for SkBuff"
+        ],
+        "must_not_contain": [
+          "impl Clone for SkBuff",
+          "impl Copy for SkBuff",
+          "#[derive(Clone",
+          "#[derive(Copy"
+        ]
+      },
+      "shared-device-stats-api": {
+        "linked_obligation_ids": [
+          "callback-pointer-aliasing"
+        ],
+        "file": "rust/kernel/net/stats.rs",
+        "must_contain": [
+          "pub fn dev_lstats_add(dev: &netdevice::Device, len: u32) {",
+          "bindings::dev_lstats_add"
+        ],
+        "must_not_contain": [
+          "pub fn dev_lstats_add(dev: &mut netdevice::Device, len: u32) {"
+        ]
+      }
+    }
+  },
+  "unsafe": {
+    "unsafe_obligation_templates": {
+      "rtnl-registration-lifetime": {
+        "phase": "mvp",
+        "area": "rtnl",
+        "category": "lifetime",
+        "evidence_literals": [
+          "rtnl_link_register",
+          "rtnl_link_unregister",
+          "module_init",
+          "module_exit"
+        ],
+        "obligation": "The Rust registration object must own a stable `rtnl_link_ops` table and unregister exactly once before module teardown.",
+        "preferred_discharge": "Hide raw register/unregister behind an RAII-style `Registration` wrapper in `rust/kernel/net/rtnl.rs`.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "netdev-private-layout": {
+        "phase": "mvp",
+        "area": "netdevice",
+        "category": "pointer-cast",
+        "evidence_literals": [
+          "netdev_priv",
+          ".priv_size = sizeof(private_state)"
+        ],
+        "obligation": "Casting `net_device` private storage into Rust state requires a proof that allocation size/layout matches the Rust private type.",
+        "preferred_discharge": "Couple `priv_size` to the Rust private-state type in the rtnl/netdevice abstraction and funnel access through the helper wrapper.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "netdev-private-zero-init": {
+        "phase": "mvp",
+        "area": "netdevice",
+        "category": "initialization",
+        "evidence_literals": [
+          "alloc_netdev/RTNL private storage is zero-initialized",
+          ".priv_size = sizeof(private_state)"
+        ],
+        "obligation": "A Rust private-state type stored in `net_device` private storage must accept the all-zero bit pattern before any callback observes it.",
+        "preferred_discharge": "Require the private-state type to be `Zeroable` and keep any non-zero initialization requirement out of the MVP callback set.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "callback-pointer-aliasing": {
+        "phase": "mvp",
+        "area": "rtnl+netdevice",
+        "category": "aliasing",
+        "evidence_context_key": "required_callbacks",
+        "obligation": "Raw callback shims must create only short-lived Rust references from C pointers and must not assume broader aliasing guarantees than the kernel provides.",
+        "preferred_discharge": "Keep all pointer-to-reference conversion inside callback trampolines in the abstraction layer.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "stats-buffer-write": {
+        "phase": "post-mvp",
+        "area": "stats",
+        "category": "mutable-ffi-output",
+        "evidence_context_key": "stats_calls",
+        "obligation": "Any Rust wrapper for `get_stats64` must guarantee that the output stats buffer is writable and initialized exactly as expected by the backing stats helper.",
+        "preferred_discharge": "Introduce a typed `Stats64Mut` wrapper before enabling `ndo_get_stats64` in the driver plan.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "skb-consumed-once": {
+        "phase": "mvp",
+        "area": "skbuff",
+        "category": "ownership",
+        "evidence_context_key": "xmit_calls",
+        "obligation": "The xmit path must consume/free each skb exactly once; Rust code must not duplicate ownership across helper and binding calls.",
+        "preferred_discharge": "Model packets as move-only `skbuff::SkBuff`; `TxOutcome::Ok` consumes via drop and `TxOutcome::Busy(skb)` returns ownership to the core explicitly.",
+        "allowed_unsafe_location": "abstraction-only"
+      }
+    }
+  }
+}

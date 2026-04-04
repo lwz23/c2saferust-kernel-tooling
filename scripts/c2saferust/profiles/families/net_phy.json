@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-family-profile",
+  "family_id": "net-phy",
+  "template_id": "net_phy_rules",
+  "helper_wrapper_candidates": {},
+  "direct_ffi_candidates": {},
+  "default_binding_header_decision": {
+    "action": "handled_by_rust_abstraction",
+    "reason": "Rust PHY drivers should default to the existing `kernel::net::phy` and `kernel::uapi` surfaces instead of importing legacy C headers into bindgen.",
+    "required_symbols": [],
+    "mvp_blocking": false
+  },
+  "bindings_header_decisions": {
+    "linux/phy.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "The Rust driver should use `kernel::net::phy` instead of bindgen-visible PHYLIB structs and helpers.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/mii.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "Clause 22 register access should go through `kernel::net::phy::reg::C22` and `kernel::uapi` constants.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/module.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "PHY Rust drivers use `module_phy_driver!` instead of C module macros.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    }
+  },
+  "implemented_net_modules": {
+    "mvp": {
+      "phy": "rust/kernel/net/phy.rs"
+    },
+    "post_mvp": {}
+  },
+  "abstraction_requirements": {
+    "phy": {
+      "patterns": [
+        "struct phy_driver",
+        "phy_read(",
+        "phy_write("
+      ],
+      "reason": "PHY drivers depend on the `phy::Driver` callback bridge and the safe `phy::Device` register API.",
+      "required_surface": [
+        "A typed `phy::Driver` trait that owns callback registration and keeps raw trampolines out of driver code.",
+        "A safe `phy::Device` surface for Clause 22/45 register reads and writes.",
+        "A `module_phy_driver!` path that keeps driver registration lifetime managed by the abstraction."
+      ],
+      "deferred_surface": [
+        "Interrupt-specific callbacks and state helpers."
+      ],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/net/phy.rs",
+        "rust/kernel/net.rs"
+      ]
+    },
+    "phy_config_aneg": {
+      "patterns": [
+        "genphy_config_aneg"
+      ],
+      "reason": "Some simple C22 PHY drivers rely on the generic PHYLIB autoneg helper from `config_aneg`.",
+      "required_surface": [
+        "Expose a safe `phy::Device::genphy_config_aneg()` wrapper so drivers do not call PHYLIB bindings directly."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/net/phy.rs"
+      ],
+      "implementation_markers": [
+        "pub fn genphy_config_aneg(&mut self) -> Result {",
+        "bindings::__genphy_config_aneg"
+      ]
+    }
+  },
+  "translation": {
+    "deferred_callback_default": {
+      "status": "deferred",
+      "rust_surface": null,
+      "body_plan": [
+        "Keep this callback outside the first Rust loop until the corresponding PHY abstraction surface exists and is reflected in the artifacts."
+      ]
+    }
+  },
+  "oracle": {
+    "runner": "qemu-module-lifecycle"
+  }
+}

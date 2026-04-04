@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-rule-pack",
+  "rule_pack_id": "et1011c_phy_safety",
+  "analysis": {
+    "unsafe_site_matchers": [
+      {
+        "id": "genphy-config-aneg-ffi",
+        "file_suffix": "rust/kernel/net/phy.rs",
+        "excerpt_contains_any": [
+          "pub fn genphy_config_aneg(&mut self) -> Result {",
+          "bindings::__genphy_config_aneg"
+        ],
+        "obligation_ids": [
+          "genphy-config-aneg-ffi"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "soundness_rule_templates": {
+      "phy-genphy-config-aneg-wrapper": {
+        "linked_obligation_ids": [
+          "genphy-config-aneg-ffi"
+        ],
+        "file": "rust/kernel/net/phy.rs",
+        "must_contain": [
+          "pub fn genphy_config_aneg(&mut self) -> Result {",
+          "bindings::__genphy_config_aneg"
+        ],
+        "must_not_contain": []
+      }
+    }
+  },
+  "unsafe": {
+    "unsafe_obligation_templates": {
+      "genphy-config-aneg-ffi": {
+        "phase": "mvp",
+        "area": "phy",
+        "category": "ffi-helper",
+        "evidence_context_key": "config_aneg_calls",
+        "obligation": "The generic autoneg helper used by `et1011c` must remain behind a safe `phy::Device` method so driver code never calls PHYLIB FFI directly.",
+        "preferred_discharge": "Expose `genphy_config_aneg()` as a safe method on `phy::Device` and keep the unsafe call inside `rust/kernel/net/phy.rs`.",
+        "allowed_unsafe_location": "abstraction-only"
+      }
+    }
+  }
+}

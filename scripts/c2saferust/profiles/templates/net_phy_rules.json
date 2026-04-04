@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-template-profile",
+  "template_id": "net_phy_rules",
+  "rule_pack_ids": [
+    "net_phy_core_safety"
+  ],
+  "planning": {
+    "bindings_patch_style_constraints": [
+      "Prefer not to add PHY-driver C headers to `bindings_helper.h` unless the abstraction plan proves they are still needed after wrapper design.",
+      "Do not mirror legacy C include lists into Rust bindings when the Rust driver can stay within `kernel::net::phy` and `kernel::uapi`."
+    ]
+  },
+  "analysis": {
+    "source_model": "phy_driver",
+    "net_scope_assessment": {
+      "baseline_modules": [
+        "rust/kernel/net/phy.rs",
+        "rust/kernel/net/phy/reg.rs"
+      ],
+      "messages": {
+        "all_implemented": "The tree already exposes the required PHY abstraction surfaces ({implemented_areas}); the current module can stay inside the existing PHY layer.",
+        "baseline_only": "The tree already has a Rust PHY baseline, but `{module_id}` still needs explicit planning for the remaining module-specific PHY surfaces.",
+        "partial": "The tree exposes partial PHY support; `{module_id}` still needs the remaining planned PHY surfaces after {implemented_areas_or_default}."
+      }
+    }
+  },
+  "translation": {
+    "allowed_driver_surfaces": [
+      "kernel::net::phy::{self, DeviceId, Driver, reg::C22}",
+      "kernel::prelude::*",
+      "kernel::uapi"
+    ],
+    "forbidden_driver_calls": [
+      "bindings::",
+      "bindings::mdiobus_read",
+      "bindings::mdiobus_write",
+      "bindings::__genphy_config_aneg",
+      "bindings::genphy_config_aneg",
+      "bindings::genphy_read_status"
+    ],
+    "driver_policy": {
+      "driver_zero_unsafe": true,
+      "driver_zero_bindings": true,
+      "driver_zero_extern_c": true
+    },
+    "driver_generation_rules": [
+      "Driver code may borrow style from existing Rust PHY drivers, but must stay within the safe `kernel::net::phy` driver surface.",
+      "Do not read or write PHY registers through raw `bindings::*`; keep all access through `phy::Device` and typed register wrappers.",
+      "Any new PHY callback beyond the current artifact boundary requires updating the profile and artifacts first."
+    ]
+  },
+  "safety": {
+    "driver_policy": {
+      "zero_unsafe": true,
+      "zero_bindings": true,
+      "zero_extern_c": true,
+      "required_crate_attributes": [
+        "#![forbid(unsafe_code)]"
+      ],
+      "forbidden_tokens": [
+        "unsafe",
+        "bindings::",
+        "extern \"C\"",
+        "*mut ",
+        "*const "
+      ]
+    },
+    "abstraction_allowlist_prefixes": [
+      "rust/kernel/net/"
+    ]
+  },
+  "unsafe": {
+    "driver_side_rules": [
+      "Do not use `unsafe` in driver code, including `unsafe impl`, `unsafe fn`, or `unsafe {}` blocks.",
+      "Do not reference `bindings::*` directly from driver code; keep all PHYLIB interaction inside `kernel::net::phy`.",
+      "Do not add raw pointer manipulation or direct MDIO register FFI calls in `{driver_rust_path}`.",
+      "Keep driver logic restricted to the callback set declared in `translation-plan.json`."
+    ]
+  }
+}

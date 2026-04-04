@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-rule-pack",
+  "rule_pack_id": "vsockmon_vsock_tap_safety",
+  "analysis": {
+    "unsafe_site_matchers": [
+      {
+        "id": "vsock-tap-module-pointer-validity",
+        "file_suffix": "rust/kernel/net/vsock_tap.rs",
+        "excerpt_contains_any": [
+          "vsock_add_tap",
+          "module",
+          ".dev"
+        ],
+        "obligation_ids": [
+          "tap-module-pointer-validity"
+        ]
+      },
+      {
+        "id": "vsock-tap-open-stop-balance",
+        "file_suffix": "rust/kernel/net/vsock_tap.rs",
+        "excerpt_contains_any": [
+          "vsock_remove_tap",
+          "registered",
+          "zeroed"
+        ],
+        "obligation_ids": [
+          "tap-open-stop-balance"
+        ]
+      }
+    ]
+  },
+  "unsafe": {
+    "unsafe_obligation_templates": {
+      "tap-module-pointer-validity": {
+        "phase": "mvp",
+        "area": "vsock_tap",
+        "category": "ffi-pointer",
+        "evidence_context_key": "open_tap_assignments",
+        "evidence_literals": [
+          {
+            "field": "module",
+            "value": "THIS_MODULE"
+          }
+        ],
+        "obligation": "Before `vsock_add_tap`, Rust must populate the vsock tap `dev` and `module` pointers with values that outlive the registration.",
+        "preferred_discharge": "Thread `&'static ThisModule` through a dedicated `vsock_tap` abstraction and write module/device pointers inside the wrapper.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "tap-open-stop-balance": {
+        "phase": "mvp",
+        "area": "vsock_tap",
+        "category": "state-machine",
+        "evidence_context_key": "open_and_stop_calls",
+        "obligation": "Open/stop shims must keep vsock tap registration balanced and avoid double-remove on partially initialized state.",
+        "preferred_discharge": "Model tap state explicitly in the wrapper or rely on netdevice lifecycle invariants while keeping transitions localized.",
+        "allowed_unsafe_location": "abstraction-only"
+      }
+    }
+  }
+}

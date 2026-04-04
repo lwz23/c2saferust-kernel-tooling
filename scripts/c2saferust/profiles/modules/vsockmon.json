@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-module-profile",
+  "profile_id": "vsockmon",
+  "family_id": "net-link-type",
+  "rule_pack_ids": [
+    "vsockmon_vsock_tap_safety"
+  ],
+  "module_path": "drivers/net/vsockmon.c",
+  "module_id": "vsockmon",
+  "artifact_dir": "Documentation/rust/c2saferust/vsockmon",
+  "driver_rust_path": "drivers/net/vsockmon_rust.rs",
+  "direct_ffi_candidates": {
+    "vsock_add_tap": "regular exported vsock tap registration function",
+    "vsock_remove_tap": "regular exported vsock tap unregistration function"
+  },
+  "bindings_header_decisions": {
+    "linux/if_arp.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose `ARPHRD_VSOCKMON` for `vsockmon_setup` device type configuration.",
+      "required_symbols": [
+        "ARPHRD_VSOCKMON"
+      ],
+      "mvp_blocking": true
+    },
+    "linux/netdevice.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose `net_device`, `net_device_ops`, `dev_lstats_read`, flags, and per-cpu stat enums needed by vsockmon planning.",
+      "required_symbols": [
+        "struct net_device",
+        "struct net_device_ops",
+        "struct rtnl_link_stats64",
+        "dev_lstats_read",
+        "IFF_NO_QUEUE",
+        "NETDEV_PCPU_STAT_LSTATS"
+      ],
+      "mvp_blocking": true
+    },
+    "linux/virtio_vsock.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose `VIRTIO_VSOCK_MAX_PKT_BUF_SIZE` for the current vsockmon MTU expression.",
+      "required_symbols": [
+        "VIRTIO_VSOCK_MAX_PKT_BUF_SIZE"
+      ],
+      "mvp_blocking": false
+    },
+    "net/af_vsock.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "The vsock tap and header layout should be hidden behind a dedicated Rust abstraction instead of leaking raw transport internals to driver code.",
+      "required_symbols": [
+        "struct af_vsockmon_hdr"
+      ],
+      "mvp_blocking": true
+    },
+    "net/rtnetlink.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose `rtnl_link_ops`, `rtnl_link_register`, and `rtnl_link_unregister` for the link-type abstraction plan.",
+      "required_symbols": [
+        "struct rtnl_link_ops",
+        "rtnl_link_register",
+        "rtnl_link_unregister"
+      ],
+      "mvp_blocking": true
+    },
+    "uapi/linux/vsockmon.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose the exported monitoring header type needed by the current MTU calculation.",
+      "required_symbols": [
+        "struct af_vsockmon_hdr"
+      ],
+      "mvp_blocking": false
+    }
+  },
+  "abstraction_requirements": {
+    "vsock_tap": {
+      "patterns": [
+        "struct vsock_tap",
+        "vsock_add_tap",
+        "vsock_remove_tap"
+      ],
+      "reason": "vsockmon open/close lifecycle is defined around vsock tap registration rather than netlink tap registration.",
+      "required_surface": [
+        "A private-state-owned vsock tap handle that stores `dev` and `module` before registration.",
+        "Open/stop helper methods that call `vsock_add_tap`/`vsock_remove_tap` in matched lifecycle points."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [
+        "bindings-patch-plan.json"
+      ],
+      "preferred_files": [
+        "rust/kernel/net/vsock_tap.rs",
+        "rust/kernel/net.rs"
+      ]
+    }
+  },
+  "translation": {
+    "goal": "Constrain the first `drivers/net/vsockmon_rust.rs` to a profile-driven plan that exposes missing vsock-specific abstractions before driver codegen.",
+    "abstraction_goal": "Constrain Phase 4 so a future vsockmon Rust loop is blocked on explicit vsock tap and MTU abstraction work instead of ad-hoc driver invention.",
+    "mvp_scope": {
+      "target_command": "ip link add vsockmon0 type vsockmon && ip link set vsockmon0 up && ip link show vsockmon0 && ip link set vsockmon0 down && ip link del vsockmon0",
+      "note": "The first vsockmon loop should still target the same lifecycle oracle, but the profile must first expose vsock-specific tap and MTU abstractions."
+    },
+    "required_callback_fields": [
+      {
+        "source": "rtnl_link_ops",
+        "field": "setup"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_open"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_stop"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_start_xmit"
+      }
+    ],
+    "deferred_callback_fields": [
+      {
+        "source": "net_device_ops",
+        "field": "ndo_get_stats64"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_change_mtu"
+      },
+      {
+        "source": "ethtool_ops",
+        "field": "get_link"
+      }
+    ],
+    "callback_roles": {
+      "rtnl_link_ops.setup": {
+        "status": "required",
+        "rust_surface": "impl rtnl::Driver for VsockmonDriver::setup",
+        "body_plan": [
+          "Only use the typed `netdevice::Device` setters listed in `setup_translation`.",
+          "Keep vsock-specific constants and header coupling behind abstractions rather than in driver code."
+        ]
+      },
+      "net_device_ops.ndo_open": {
+        "status": "required",
+        "rust_surface": "impl netdevice::Operations for VsockmonDriver::open",
+        "body_plan": [
+          "Access private state through the typed `private` argument only.",
+          "Call `private.tap.add(dev, &THIS_MODULE)?` through a future `vsock_tap::Tap` abstraction."
+        ]
+      },
+      "net_device_ops.ndo_stop": {
+        "status": "required",
+        "rust_surface": "impl netdevice::Operations for VsockmonDriver::stop",
+        "body_plan": [
+          "Access private state through the typed `private` argument only.",
+          "Call `private.tap.remove()?` through a future `vsock_tap::Tap` abstraction."
+        ]
+      },
+      "net_device_ops.ndo_start_xmit": {
+        "status": "required",
+        "rust_surface": "impl netdevice::Operations for VsockmonDriver::start_xmit",
+        "body_plan": [
+          "Receive the packet as owned `skbuff::SkBuff` and the device as shared `&netdevice::Device` only.",
+          "Call `stats::dev_lstats_add(dev, skb.len())` before returning.",
+          "Return `netdevice::TxOutcome::Ok` without exposing helper FFI in the driver."
+        ]
+      }
+    },
+    "setup_translation_map": {
+      "type": {
+        "status": "required",
+        "rust_surface": "dev.set_type(netdevice::device_type::VSOCKMON)",
+        "note": "Keep device type selection inside the typed `netdevice::Device` wrapper."
+      },
+      "priv_flags": {
+        "status": "required",
+        "rust_surface": "dev.add_priv_flag(netdevice::priv_flags::NO_QUEUE)",
+        "note": "Preserve the `IFF_NO_QUEUE` setup bit without raw field access."
+      },
+      "lltx": {
+        "status": "required",
+        "rust_surface": "dev.set_lltx(true)",
+        "note": "Keep lockless TX configuration in the wrapper layer."
+      },
+      "netdev_ops": {
+        "status": "handled_by_abstraction",
+        "rust_surface": "implicit via `rtnl::Registration::<VsockmonDriver>::setup_callback`",
+        "note": "Do not assign `dev->netdev_ops` in driver code; the rtnl abstraction wires it before `setup`."
+      },
+      "ethtool_ops": {
+        "status": "deferred",
+        "rust_surface": "omit in MVP",
+        "note": "Keep `ethtool_ops` out of the first Rust loop."
+      },
+      "needs_free_netdev": {
+        "status": "required",
+        "rust_surface": "dev.set_needs_free_netdev(true)",
+        "note": "Keep free-on-destroy policy inside the wrapper."
+      },
+      "features": {
+        "status": "required",
+        "rust_surface": "dev.set_features(netdevice::features::SG | netdevice::features::FRAGLIST | netdevice::features::HIGHDMA)",
+        "note": "Keep the feature bit expression inside the typed netdevice abstraction surface."
+      },
+      "flags": {
+        "status": "required",
+        "rust_surface": "dev.set_flags(netdevice::flags::NO_ARP)",
+        "note": "Preserve the `IFF_NOARP` setup bit through the typed wrapper."
+      },
+      "mtu": {
+        "status": "manual-review",
+        "rust_surface": null,
+        "note": "The current MTU expression depends on vsock-specific exported constants and should be lifted behind a future dedicated abstraction."
+      },
+      "pcpu_stat_type": {
+        "status": "mvp-allowed",
+        "rust_surface": "dev.set_pcpu_stat_type(netdevice::pcpu_stat_type::LSTATS)",
+        "note": "Keep the setup write for parity, but do not enable `ndo_get_stats64` yet."
+      }
+    },
+    "validate_translation_rules": [],
+    "module_shell": {
+      "module_macro_required": true,
+      "preferred_module_type": "VsockmonModule",
+      "preferred_driver_type": "VsockmonDriver",
+      "preferred_private_type": "VsockmonPriv",
+      "preferred_module_trait": "kernel::InPlaceModule",
+      "owned_registration": "rtnl::Registration<VsockmonDriver>",
+      "registration_kind": "c_str!(\"vsockmon\")",
+      "module_aliases": [
+        "rtnl-link-vsockmon"
+      ]
+    },
+    "private_state": {
+      "type_name": "VsockmonPriv",
+      "layout": "#[repr(C)]",
+      "init_policy": {
+        "allocation_source": "RTNL/net core zero-initialized private storage",
+        "rust_requirement": "The private type must accept the all-zero bit pattern (`Zeroable`)."
+      },
+      "fields": [
+        {
+          "name": "tap",
+          "rust_type": "vsock_tap::Tap",
+          "source_c_field": "vt",
+          "note": "Own the vsock tap in Rust private storage; the first loop should not expose raw transport tap state."
+        }
+      ]
+    },
+    "additional_allowed_driver_surfaces": [
+      "kernel::net::vsock_tap::Tap"
+    ],
+    "additional_forbidden_driver_calls": [
+      "bindings::vsock_add_tap",
+      "bindings::vsock_remove_tap"
+    ]
+  },
+  "oracle": {
+    "runner_id": "qemu-scenario",
+    "scenario_id": "ip_link_lifecycle",
+    "scenario_inputs": {
+      "link_kind": "vsockmon",
+      "device_name_template": "{module_id}0"
+    },
+    "feedback_rules": []
+  }
+}

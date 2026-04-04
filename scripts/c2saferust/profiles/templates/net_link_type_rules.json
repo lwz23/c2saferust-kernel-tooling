@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-template-profile",
+  "template_id": "net_link_type_rules",
+  "rule_pack_ids": [
+    "net_link_type_core_safety"
+  ],
+  "planning": {
+    "bindings_patch_style_constraints": [
+      "Keep the top include list in `bindings_helper.h` alphabetically ordered.",
+      "Prefer exposing only headers needed by the current abstraction/driver plan; do not mirror every C include blindly."
+    ]
+  },
+  "analysis": {
+    "net_scope_assessment": {
+      "baseline_modules": [
+        "rust/kernel/net/phy.rs",
+        "rust/kernel/net/phy/reg.rs"
+      ],
+      "messages": {
+        "all_implemented": "The tree now contains the full smoke-path link-type abstractions ({implemented_areas}); deferred callbacks remain outside the first loop.",
+        "baseline_only": "The tree currently exposes only `net::phy`; {module_id} needs fresh abstractions for link-type devices.",
+        "partial": "The tree exposes partial Rust net support; the current module still needs the remaining MVP link-type abstractions after {implemented_areas_or_default}."
+      }
+    }
+  },
+  "translation": {
+    "allowed_driver_surfaces": [
+      "kernel::net::rtnl::{Registration, Driver, ValidateContext, LinkAttr}",
+      "kernel::net::netdevice::{Device, Operations, TxOutcome, device_type, flags, priv_flags, pcpu_stat_type, features, mtu}",
+      "kernel::net::skbuff::SkBuff",
+      "kernel::net::stats",
+      "kernel::ThisModule",
+      "&THIS_MODULE"
+    ],
+    "forbidden_driver_calls": [
+      "bindings::rtnl_link_register",
+      "bindings::rtnl_link_unregister",
+      "bindings::netdev_priv",
+      "bindings::dev_kfree_skb",
+      "bindings::dev_lstats_add"
+    ],
+    "driver_policy": {
+      "driver_zero_unsafe": true,
+      "driver_zero_bindings": true,
+      "driver_zero_extern_c": true
+    },
+    "driver_generation_rules": [
+      "Driver code may borrow style from `drivers/net/phy/ax88796b_rust.rs` / `rust/kernel/net/phy.rs`, but only for module/abstraction layering.",
+      "Driver code must not call raw register/unregister or helper exports directly from the driver surface.",
+      "Any Phase 4 expansion beyond the `mvp_scope.deferred_callbacks` list requires updating this artifact first."
+    ]
+  },
+  "safety": {
+    "driver_policy": {
+      "zero_unsafe": true,
+      "zero_bindings": true,
+      "zero_extern_c": true,
+      "required_crate_attributes": [
+        "#![forbid(unsafe_code)]"
+      ],
+      "forbidden_tokens": [
+        "unsafe",
+        "bindings::",
+        "extern \"C\"",
+        "*mut ",
+        "*const "
+      ]
+    },
+    "abstraction_allowlist_prefixes": [
+      "rust/kernel/net/"
+    ]
+  },
+  "unsafe": {
+    "driver_side_rules": [
+      "Do not use `unsafe` in driver code, including `unsafe impl`, `unsafe fn`, or `unsafe {}` blocks.",
+      "Do not reference `bindings::*` directly from driver code; route constants and types through approved abstractions.",
+      "Do not cast `net_device` private storage inside `{driver_rust_path}`.",
+      "Do not add new raw FFI calls in driver code beyond the abstractions named in `abstraction-plan.json`.",
+      "Driver `start_xmit` may only use `skbuff::SkBuff`, `stats::dev_lstats_add`, and `netdevice::TxOutcome`; ownership must stay inside those safe surfaces.",
+      "Keep deferred callbacks disabled until the corresponding post-MVP obligations have an explicit discharge path."
+    ]
+  }
+}

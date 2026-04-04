@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-family-profile",
+  "family_id": "net-link-type",
+  "template_id": "net_link_type_rules",
+  "helper_wrapper_candidates": {
+    "dev_kfree_skb": {
+      "helper_name": "rust_helper_dev_kfree_skb",
+      "reason": "skb release helper is exposed as a macro and should not leak macro expansion into Rust",
+      "required_headers": [
+        "linux/skbuff.h"
+      ],
+      "signature": "void rust_helper_dev_kfree_skb(struct sk_buff *skb)",
+      "body": [
+        "\tdev_kfree_skb(skb);"
+      ],
+      "mvp_blocking": false
+    },
+    "dev_lstats_add": {
+      "helper_name": "rust_helper_dev_lstats_add",
+      "reason": "per-cpu stats helper; bindgen cannot cross the inline boundary directly",
+      "required_headers": [
+        "linux/netdevice.h"
+      ],
+      "signature": "void rust_helper_dev_lstats_add(struct net_device *dev, unsigned int len)",
+      "body": [
+        "\tdev_lstats_add(dev, len);"
+      ],
+      "mvp_blocking": false
+    },
+    "netdev_priv": {
+      "helper_name": "rust_helper_netdev_priv",
+      "reason": "private data access helper; Rust side should not depend on C macro expansion",
+      "required_headers": [
+        "linux/netdevice.h"
+      ],
+      "signature": "void *rust_helper_netdev_priv(const struct net_device *dev)",
+      "body": [
+        "\treturn netdev_priv(dev);"
+      ],
+      "mvp_blocking": true
+    }
+  },
+  "direct_ffi_candidates": {
+    "dev_lstats_read": "regular function used by stats callback",
+    "rtnl_link_register": "regular exported rtnl link registration function",
+    "rtnl_link_unregister": "regular exported rtnl link unregistration function"
+  },
+  "bindings_header_decisions": {
+    "linux/kernel.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "The Rust side should avoid depending on generic C helper macros from `linux/kernel.h`.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/module.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "Use `kernel::ThisModule`/`module!` instead of bindgen exposure for `THIS_MODULE` and module lifecycle macros.",
+      "required_symbols": [
+        "THIS_MODULE"
+      ],
+      "mvp_blocking": false
+    }
+  },
+  "implemented_net_modules": {
+    "mvp": {
+      "rtnl": "rust/kernel/net/rtnl.rs",
+      "netdevice": "rust/kernel/net/netdevice.rs",
+      "stats": "rust/kernel/net/stats.rs",
+      "skbuff": "rust/kernel/net/skbuff.rs"
+    },
+    "post_mvp": {}
+  },
+  "abstraction_requirements": {
+    "rtnl": {
+      "patterns": [
+        "struct rtnl_link_ops",
+        "rtnl_link_register",
+        "rtnl_link_unregister"
+      ],
+      "reason": "Link-type drivers need Rust-side rtnl registration and callback bridging.",
+      "required_surface": [
+        "A registration owner that balances `rtnl_link_register`/`rtnl_link_unregister`.",
+        "A typed link-ops description carrying `kind`, `priv_size`, `setup`, and optional `validate`.",
+        "Callback shims that keep raw `nlattr`/`netlink_ext_ack` handling out of driver code."
+      ],
+      "deferred_surface": [
+        "Optional `newlink`/`changelink`/`dellink` hooks.",
+        "xstats and queue-count helpers."
+      ],
+      "depends_on_artifacts": [
+        "bindings-patch-plan.json"
+      ],
+      "preferred_files": [
+        "rust/kernel/net/rtnl.rs",
+        "rust/kernel/net.rs"
+      ]
+    },
+    "netdevice": {
+      "patterns": [
+        "struct net_device_ops",
+        "struct net_device",
+        "struct ethtool_ops"
+      ],
+      "reason": "Link-type drivers configure `net_device` state, netdev ops, and setup flags.",
+      "required_surface": [
+        "A typed `net_device` wrapper for `setup` field writes and private storage access.",
+        "A `net_device_ops`-style trait covering `open`, `stop`, and an ownership-safe `start_xmit` surface.",
+        "Enough constants/enums to set device type, flags, priv_flags, free-on-destroy policy, and MTU bounds."
+      ],
+      "deferred_surface": [
+        "Dedicated `ethtool_ops` wrapper surfaces.",
+        "A typed `get_stats64` callback surface."
+      ],
+      "depends_on_artifacts": [
+        "bindings-patch-plan.json",
+        "helpers-patch-plan.json"
+      ],
+      "preferred_files": [
+        "rust/kernel/net/netdevice.rs",
+        "rust/kernel/net.rs"
+      ]
+    },
+    "stats": {
+      "patterns": [
+        "dev_lstats_add",
+        "dev_lstats_read",
+        "rtnl_link_stats64"
+      ],
+      "reason": "Link-type drivers typically use lstats helpers and/or stats callbacks.",
+      "required_surface": [
+        "Expose the per-cpu stats configuration constant for `setup` if the profile keeps that field write.",
+        "Provide a helper-backed `dev_lstats_add` wrapper that driver code can call without touching helper FFI directly."
+      ],
+      "deferred_surface": [
+        "A typed wrapper for `dev_lstats_read` and `rtnl_link_stats64`."
+      ],
+      "depends_on_artifacts": [
+        "helpers-patch-plan.json",
+        "bindings-patch-plan.json"
+      ],
+      "preferred_files": [
+        "rust/kernel/net/stats.rs",
+        "rust/kernel/net.rs"
+      ]
+    },
+    "skbuff": {
+      "patterns": [
+        "struct sk_buff",
+        "dev_kfree_skb"
+      ],
+      "reason": "Link-type drivers often consume skb objects in the xmit path.",
+      "required_surface": [
+        "A move-only skb owner for `ndo_start_xmit` that frees on drop and can hand ownership back to the core on `NETDEV_TX_BUSY`."
+      ],
+      "deferred_surface": [
+        "Packet mutation helpers beyond `len()`."
+      ],
+      "depends_on_artifacts": [
+        "helpers-patch-plan.json"
+      ],
+      "preferred_files": [
+        "rust/kernel/net/skbuff.rs",
+        "rust/kernel/net.rs"
+      ]
+    }
+  },
+  "translation": {
+    "deferred_callback_default": {
+      "status": "deferred",
+      "rust_surface": null,
+      "body_plan": [
+        "Keep this callback out of the first Rust loop until the corresponding abstraction and oracle evidence are ready."
+      ]
+    }
+  },
+  "oracle": {
+    "runner": "qemu-scenario"
+  }
+}

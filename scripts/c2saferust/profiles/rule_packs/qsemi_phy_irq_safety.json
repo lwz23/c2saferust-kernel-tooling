@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-rule-pack",
+  "rule_pack_id": "qsemi_phy_irq_safety",
+  "analysis": {
+    "evidence_context_paths": {
+      "config_intr_calls": "source_inventory.callback_calls.config_intr",
+      "handle_interrupt_calls": "source_inventory.callback_calls.handle_interrupt"
+    },
+    "unsafe_site_matchers": [
+      {
+        "id": "phy-interrupt-config-state",
+        "file_suffix": "rust/kernel/net/phy.rs",
+        "excerpt_contains_any": [
+          "(*phydev).interrupts()"
+        ],
+        "obligation_ids": [
+          "phy-interrupt-config-state"
+        ]
+      },
+      {
+        "id": "phy-interrupt-handler-dispatch",
+        "file_suffix": "rust/kernel/net/phy.rs",
+        "excerpt_contains_any": [
+          "bindings::phy_error(",
+          "bindings::phy_trigger_machine("
+        ],
+        "obligation_ids": [
+          "phy-interrupt-handler-dispatch"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "soundness_rule_templates": {
+      "phy-interrupt-config-mode-surface": {
+        "linked_obligation_ids": [
+          "phy-interrupt-config-state"
+        ],
+        "file": "rust/kernel/net/phy.rs",
+        "must_contain": [
+          "pub enum InterruptMode {",
+          "Enabled,",
+          "Disabled,",
+          "fn interrupt_mode(&self) -> InterruptMode {",
+          "if unsafe { (*phydev).interrupts() } != 0 {",
+          "fn config_intr(_dev: &mut Device, _mode: InterruptMode) -> Result {",
+          "let mode = dev.interrupt_mode();",
+          "T::config_intr(dev, mode)?;"
+        ],
+        "must_not_contain": []
+      },
+      "phy-interrupt-handler-dispatch-surface": {
+        "linked_obligation_ids": [
+          "phy-interrupt-handler-dispatch"
+        ],
+        "file": "rust/kernel/net/phy.rs",
+        "must_contain": [
+          "pub enum InterruptAction {",
+          "None,",
+          "TriggerMachine,",
+          "fn report_error(&mut self) {",
+          "bindings::phy_error(phydev)",
+          "fn trigger_machine(&mut self) {",
+          "bindings::phy_trigger_machine(phydev)",
+          "fn handle_interrupt(_dev: &mut Device) -> Result<InterruptAction> {",
+          "Ok(InterruptAction::TriggerMachine) => {",
+          "dev.trigger_machine();",
+          "Err(_) => {",
+          "dev.report_error();"
+        ],
+        "must_not_contain": []
+      }
+    }
+  },
+  "unsafe": {
+    "unsafe_obligation_templates": {
+      "phy-interrupt-config-state": {
+        "phase": "mvp",
+        "area": "phy",
+        "category": "interrupt-state",
+        "evidence_context_key": "config_intr_calls",
+        "obligation": "A Rust surface for `config_intr` must model interrupt enable state without exposing raw `phy_device` fields to driver code.",
+        "preferred_discharge": "Model interrupt enable state through a typed `InterruptMode` passed from the abstraction-owned callback trampoline; keep raw `phydev->interrupts` reads inside `rust/kernel/net/phy.rs` only.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "phy-interrupt-handler-dispatch": {
+        "phase": "mvp",
+        "area": "phy",
+        "category": "interrupt-dispatch",
+        "evidence_context_key": "handle_interrupt_calls",
+        "obligation": "A Rust interrupt handler surface must keep `phy_error()` and `phy_trigger_machine()` inside the abstraction layer and return a typed outcome to the driver.",
+        "preferred_discharge": "Represent interrupt handling through a typed `InterruptAction` enum and abstraction-owned `phy_error()` / `phy_trigger_machine()` shims in `rust/kernel/net/phy.rs`.",
+        "allowed_unsafe_location": "abstraction-only"
+      }
+    }
+  }
+}

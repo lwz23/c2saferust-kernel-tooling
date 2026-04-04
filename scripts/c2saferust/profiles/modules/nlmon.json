@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-module-profile",
+  "profile_id": "nlmon",
+  "family_id": "net-link-type",
+  "rule_pack_ids": [
+    "nlmon_netlink_tap_safety"
+  ],
+  "module_path": "drivers/net/nlmon.c",
+  "module_id": "nlmon",
+  "artifact_dir": "Documentation/rust/c2saferust/nlmon",
+  "driver_rust_path": "drivers/net/nlmon_rust.rs",
+  "direct_ffi_candidates": {
+    "netlink_add_tap": "regular exported netlink tap registration function",
+    "netlink_remove_tap": "regular exported netlink tap unregistration function"
+  },
+  "bindings_header_decisions": {
+    "linux/if_arp.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose `ARPHRD_NETLINK` for `nlmon_setup` device type configuration.",
+      "required_symbols": [
+        "ARPHRD_NETLINK"
+      ],
+      "mvp_blocking": true
+    },
+    "linux/netdevice.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose `net_device`, `net_device_ops`, `dev_lstats_read`, flags, and per-cpu stat enums needed by nlmon planning.",
+      "required_symbols": [
+        "struct net_device",
+        "struct net_device_ops",
+        "struct rtnl_link_stats64",
+        "dev_lstats_read",
+        "IFF_NO_QUEUE",
+        "NETDEV_PCPU_STAT_LSTATS"
+      ],
+      "mvp_blocking": true
+    },
+    "linux/netlink.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose `netlink_tap`, tap registration functions, and `NLMSG_GOODSIZE` used by nlmon lifecycle/setup planning.",
+      "required_symbols": [
+        "struct netlink_tap",
+        "netlink_add_tap",
+        "netlink_remove_tap",
+        "NLMSG_GOODSIZE"
+      ],
+      "mvp_blocking": true
+    },
+    "net/net_namespace.h": {
+      "action": "defer_to_abstraction",
+      "reason": "Namespace-specific link handling is outside the first `ip link add nlmon0 type nlmon` MVP.",
+      "required_symbols": [
+        "struct net"
+      ],
+      "mvp_blocking": false
+    },
+    "net/rtnetlink.h": {
+      "action": "add_to_bindings",
+      "reason": "Expose `rtnl_link_ops`, `rtnl_link_register`, `rtnl_link_unregister`, and `netlink_ext_ack` for the link-type abstraction plan.",
+      "required_symbols": [
+        "struct rtnl_link_ops",
+        "rtnl_link_register",
+        "rtnl_link_unregister",
+        "struct netlink_ext_ack"
+      ],
+      "mvp_blocking": true
+    }
+  },
+  "implemented_net_modules": {
+    "mvp": {
+      "netlink_tap": "rust/kernel/net/netlink_tap.rs"
+    }
+  },
+  "abstraction_requirements": {
+    "netlink_tap": {
+      "patterns": [
+        "struct netlink_tap",
+        "netlink_add_tap",
+        "netlink_remove_tap"
+      ],
+      "reason": "nlmon open/close lifecycle is defined around netlink tap registration.",
+      "required_surface": [
+        "A private-state-owned tap handle that stores `dev` and `module` before registration.",
+        "Open/stop helper methods that call add/remove in matched lifecycle points."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [
+        "bindings-patch-plan.json"
+      ],
+      "preferred_files": [
+        "rust/kernel/net/netlink_tap.rs",
+        "rust/kernel/net.rs"
+      ]
+    }
+  },
+  "translation": {
+    "goal": "Constrain the first `drivers/net/nlmon_rust.rs` to a minimal, artifact-driven smoke loop covering registration, setup, validate, open, stop, and xmit.",
+    "abstraction_goal": "Constrain Phase 4 so the first Rust loop reaches the `ip link add/up/down/del nlmon0` smoke closure without unconstrained driver invention.",
+    "mvp_scope": {
+      "target_command": "ip link add nlmon0 type nlmon && ip link set nlmon0 up && ip link show nlmon0 && ip link set nlmon0 down && ip link del nlmon0",
+      "note": "The first Rust loop must already cover the smoke-path lifecycle. `xmit` is required for `ip link set ... up`; `get_stats64` and `ethtool` parity can still land later."
+    },
+    "required_callback_fields": [
+      {
+        "source": "rtnl_link_ops",
+        "field": "setup"
+      },
+      {
+        "source": "rtnl_link_ops",
+        "field": "validate"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_open"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_stop"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_start_xmit"
+      }
+    ],
+    "deferred_callback_fields": [
+      {
+        "source": "net_device_ops",
+        "field": "ndo_get_stats64"
+      },
+      {
+        "source": "ethtool_ops",
+        "field": "get_link"
+      }
+    ],
+    "callback_roles": {
+      "rtnl_link_ops.setup": {
+        "status": "required",
+        "rust_surface": "impl rtnl::Driver for NlmonDriver::setup",
+        "body_plan": [
+          "Only use the typed `netdevice::Device` setters listed in `setup_translation`.",
+          "Do not assign `netdev_ops` directly; the rtnl abstraction does that automatically."
+        ]
+      },
+      "rtnl_link_ops.validate": {
+        "status": "required",
+        "rust_surface": "impl rtnl::Driver for NlmonDriver::validate",
+        "body_plan": [
+          "Express the current MVP rule through `ValidateContext` only.",
+          "Return `Err(EINVAL)` when `IFLA_ADDRESS` is present."
+        ]
+      },
+      "net_device_ops.ndo_open": {
+        "status": "required",
+        "rust_surface": "impl netdevice::Operations for NlmonDriver::open",
+        "body_plan": [
+          "Access private state through the typed `private` argument only.",
+          "Call `private.tap.add(dev, &THIS_MODULE)?`."
+        ]
+      },
+      "net_device_ops.ndo_stop": {
+        "status": "required",
+        "rust_surface": "impl netdevice::Operations for NlmonDriver::stop",
+        "body_plan": [
+          "Access private state through the typed `private` argument only.",
+          "Call `private.tap.remove()?`."
+        ]
+      },
+      "net_device_ops.ndo_start_xmit": {
+        "status": "required",
+        "rust_surface": "impl netdevice::Operations for NlmonDriver::start_xmit",
+        "body_plan": [
+          "Receive the packet as owned `skbuff::SkBuff` and the device as shared `&netdevice::Device` only.",
+          "Call `stats::dev_lstats_add(dev, skb.len())` before returning.",
+          "Return `netdevice::TxOutcome::Ok`; let the skb ownership discharge through the abstraction rather than explicit free calls in driver code."
+        ]
+      }
+    },
+    "setup_translation_map": {
+      "type": {
+        "status": "required",
+        "rust_surface": "dev.set_type(netdevice::device_type::NETLINK)",
+        "note": "Keep device type selection inside the typed `netdevice::Device` wrapper."
+      },
+      "priv_flags": {
+        "status": "required",
+        "rust_surface": "dev.add_priv_flag(netdevice::priv_flags::NO_QUEUE)",
+        "note": "Preserve the `IFF_NO_QUEUE` setup bit without raw field access."
+      },
+      "lltx": {
+        "status": "required",
+        "rust_surface": "dev.set_lltx(true)",
+        "note": "Keep lockless TX configuration in the wrapper layer."
+      },
+      "netdev_ops": {
+        "status": "handled_by_abstraction",
+        "rust_surface": "implicit via `rtnl::Registration::<NlmonDriver>::setup_callback`",
+        "note": "Do not assign `dev->netdev_ops` in driver code; the rtnl abstraction wires it before `setup`."
+      },
+      "ethtool_ops": {
+        "status": "deferred",
+        "rust_surface": "omit in MVP",
+        "note": "Keep `ethtool_ops` out of the first loop together with `always_on`."
+      },
+      "needs_free_netdev": {
+        "status": "required",
+        "rust_surface": "dev.set_needs_free_netdev(true)",
+        "note": "Keep free-on-destroy policy inside the wrapper."
+      },
+      "features": {
+        "status": "required",
+        "rust_surface": "dev.set_features(netdevice::features::SG | netdevice::features::FRAGLIST | netdevice::features::HIGHDMA)",
+        "note": "Keep the feature bit expression inside the typed netdevice abstraction surface."
+      },
+      "flags": {
+        "status": "required",
+        "rust_surface": "dev.set_flags(netdevice::flags::NO_ARP)",
+        "note": "Preserve the `IFF_NOARP` setup bit through the typed wrapper."
+      },
+      "pcpu_stat_type": {
+        "status": "mvp-allowed",
+        "rust_surface": "dev.set_pcpu_stat_type(netdevice::pcpu_stat_type::LSTATS)",
+        "note": "Keep the setup write for parity, but do not enable `ndo_get_stats64` yet."
+      },
+      "mtu": {
+        "status": "required",
+        "rust_surface": "dev.set_mtu(netdevice::mtu::nlmsg_goodsize())",
+        "note": "Keep the softlimit MTU assignment explicit in `setup`, but hide bindgen-dependent constants behind the abstraction."
+      },
+      "min_mtu": {
+        "status": "required",
+        "rust_surface": "dev.set_min_mtu(netdevice::mtu::NLMSGHDR)",
+        "note": "Expose the `nlmsghdr` size through the abstraction rather than direct bindgen usage in driver code."
+      }
+    },
+    "validate_translation_rules": [
+      {
+        "field": "IFLA_ADDRESS",
+        "return": "-EINVAL",
+        "status": "required",
+        "rust_surface": "if ctx.has_link_attr(rtnl::LinkAttr::ADDRESS) { return Err(EINVAL); }",
+        "note": "Use `ValidateContext`/typed `LinkAttr` instead of raw `tb[]` indexing."
+      }
+    ],
+    "module_shell": {
+      "module_macro_required": true,
+      "preferred_module_type": "NlmonModule",
+      "preferred_driver_type": "NlmonDriver",
+      "preferred_private_type": "NlmonPriv",
+      "preferred_module_trait": "kernel::InPlaceModule",
+      "owned_registration": "rtnl::Registration<NlmonDriver>",
+      "registration_kind": "c_str!(\"nlmon\")",
+      "module_aliases": [
+        "rtnl-link-nlmon"
+      ]
+    },
+    "private_state": {
+      "type_name": "NlmonPriv",
+      "layout": "#[repr(C)]",
+      "init_policy": {
+        "allocation_source": "RTNL/net core zero-initialized private storage",
+        "rust_requirement": "The private type must accept the all-zero bit pattern (`Zeroable`)."
+      },
+      "fields": [
+        {
+          "name": "tap",
+          "rust_type": "netlink_tap::Tap",
+          "source_c_field": "nt",
+          "note": "Own the netlink tap in Rust private storage; the MVP flow only uses it in open/stop."
+        }
+      ]
+    },
+    "additional_allowed_driver_surfaces": [
+      "kernel::net::netlink_tap::Tap"
+    ],
+    "additional_forbidden_driver_calls": [
+      "bindings::netlink_add_tap",
+      "bindings::netlink_remove_tap"
+    ]
+  },
+  "oracle": {
+    "runner_id": "qemu-scenario",
+    "scenario_id": "ip_link_lifecycle",
+    "scenario_inputs": {
+      "link_kind": "nlmon",
+      "device_name_template": "{module_id}0"
+    },
+    "feedback_rules": [
+      {
+        "id": "promote-xmit-from-oracle",
+        "when": {
+          "result": "FAIL",
+          "summary_nonzero_any": [
+            "up_rc",
+            "show_rc",
+            "down_rc",
+            "del_rc"
+          ]
+        },
+        "actions": [
+          {
+            "type": "promote_callback",
+            "source": "net_device_ops",
+            "field": "ndo_start_xmit"
+          },
+          {
+            "type": "promote_area",
+            "area": "stats"
+          },
+          {
+            "type": "promote_area",
+            "area": "skbuff"
+          },
+          {
+            "type": "add_blocker",
+            "targets": [
+              "abstraction-plan",
+              "translation-plan"
+            ],
+            "message": "Oracle failure shows that the xmit path is part of the lifecycle-critical MVP surface for this scenario."
+          },
+          {
+            "type": "add_note",
+            "targets": [
+              "translation-plan",
+              "unsafe-obligations",
+              "safety-policy"
+            ],
+            "message": "Oracle-driven correction: the first Rust loop must keep `start_xmit` ownership-safe and driver-side zero-unsafe."
+          }
+        ]
+      }
+    ]
+  }
+}

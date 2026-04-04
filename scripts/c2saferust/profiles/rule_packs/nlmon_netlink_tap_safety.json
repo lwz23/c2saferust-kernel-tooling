@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-rule-pack",
+  "rule_pack_id": "nlmon_netlink_tap_safety",
+  "analysis": {
+    "unsafe_site_matchers": [
+      {
+        "id": "netlink-tap-module-pointer-validity",
+        "file_suffix": "rust/kernel/net/netlink_tap.rs",
+        "excerpt_contains_any": [
+          "netlink_add_tap",
+          "module",
+          ".dev"
+        ],
+        "obligation_ids": [
+          "tap-module-pointer-validity"
+        ]
+      },
+      {
+        "id": "netlink-tap-open-stop-balance",
+        "file_suffix": "rust/kernel/net/netlink_tap.rs",
+        "excerpt_contains_any": [
+          "netlink_remove_tap",
+          "registered",
+          "zeroed"
+        ],
+        "obligation_ids": [
+          "tap-open-stop-balance"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "soundness_rule_templates": {
+      "pinned-netlink-tap-api": {
+        "linked_obligation_ids": [
+          "tap-module-pointer-validity",
+          "tap-open-stop-balance"
+        ],
+        "file": "rust/kernel/net/netlink_tap.rs",
+        "must_contain": [
+          "pub fn add(self: Pin<&mut Self>",
+          "pub fn remove(self: Pin<&mut Self>) -> Result"
+        ],
+        "must_not_contain": [
+          "pub fn add(&mut self",
+          "pub fn remove(&mut self)"
+        ]
+      }
+    }
+  },
+  "unsafe": {
+    "unsafe_obligation_templates": {
+      "tap-module-pointer-validity": {
+        "phase": "mvp",
+        "area": "netlink_tap",
+        "category": "ffi-pointer",
+        "evidence_context_key": "open_tap_assignments",
+        "evidence_literals": [
+          {
+            "field": "module",
+            "value": "THIS_MODULE"
+          }
+        ],
+        "obligation": "Before `netlink_add_tap`, Rust must populate `netlink_tap.dev` and `netlink_tap.module` with valid pointers that outlive the registration.",
+        "preferred_discharge": "Thread `&'static ThisModule` through the abstraction and write `ThisModule::as_ptr()` inside the wrapper.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "tap-open-stop-balance": {
+        "phase": "mvp",
+        "area": "netlink_tap",
+        "category": "state-machine",
+        "evidence_context_key": "open_and_stop_calls",
+        "obligation": "Open/stop shims must keep tap registration balanced and avoid double-remove on partially initialized state.",
+        "preferred_discharge": "Model tap state explicitly in the wrapper or rely on netdevice lifecycle invariants while keeping transitions localized.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "validate-attribute-indexing": {
+        "phase": "mvp",
+        "area": "rtnl",
+        "category": "bounds",
+        "evidence_context_key": "validate_checks",
+        "obligation": "Access to `tb[IFLA_ADDRESS]` must preserve kernel indexing rules and nullability checks when surfaced to Rust.",
+        "preferred_discharge": "Provide a safe `NlAttrTable` accessor instead of exposing raw pointer arithmetic to driver code.",
+        "allowed_unsafe_location": "abstraction-only"
+      }
+    }
+  }
+}

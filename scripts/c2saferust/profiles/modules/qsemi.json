@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-module-profile",
+  "profile_id": "qsemi",
+  "family_id": "net-phy",
+  "rule_pack_ids": [
+    "qsemi_phy_irq_safety"
+  ],
+  "module_path": "drivers/net/phy/qsemi.c",
+  "module_id": "qsemi",
+  "artifact_dir": "Documentation/rust/c2saferust/qsemi",
+  "driver_rust_path": "drivers/net/phy/qsemi_rust.rs",
+  "kbuild": {
+    "rust_config_symbol": "QSEMI_RUST_PHY",
+    "rust_config_prompt": "Rust reference driver for Quality Semiconductor PHYs",
+    "rust_depends_on": "RUST_PHYLIB_ABSTRACTIONS && QSEMI_PHY",
+    "rust_help": [
+      "Uses the Rust reference driver for Quality Semiconductor PHYs (qsemi_rust.ko).",
+      "The features are intended to stay equivalent to the C driver."
+    ]
+  },
+  "abstraction_requirements": {
+    "phy_irq_callbacks": {
+      "patterns": [
+        "config_intr",
+        "handle_interrupt",
+        "PHY_INTERRUPT_ENABLED",
+        "phy_trigger_machine",
+        "phy_error"
+      ],
+      "reason": "Interrupt-capable PHY drivers need more than the current Rust PHY callback surface.",
+      "required_surface": [
+        "A safe `phy::Driver` extension for `config_intr` and `handle_interrupt`.",
+        "A typed representation of interrupt enable state and handler return status.",
+        "A safe way to report PHY errors and trigger the PHY state machine from the abstraction layer."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/net/phy.rs"
+      ],
+      "implementation_markers": [
+        "fn config_intr(",
+        "fn handle_interrupt("
+      ]
+    },
+    "phy_config_init": {
+      "patterns": [
+        "config_init"
+      ],
+      "reason": "The qsemi family needs a Rust callback surface for one-time PHY initialization.",
+      "required_surface": [
+        "A safe `phy::Driver::config_init` hook in the PHY abstraction."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/net/phy.rs"
+      ],
+      "implementation_markers": [
+        "fn config_init("
+      ]
+    }
+  },
+  "translation": {
+    "goal": "Constrain `qsemi` as a second-stage PHY case that is blocked on explicit interrupt-capable PHY abstraction work rather than ad-hoc driver invention.",
+    "abstraction_goal": "Make the missing IRQ/config-init PHY surfaces explicit before any `qsemi` Rust driver work starts.",
+    "mvp_scope": {
+      "target_command": "insmod qsemi_rust.ko && rmmod qsemi_rust",
+      "note": "This module is intentionally blocked until the missing PHY IRQ callback surfaces are implemented and reflected in the artifacts."
+    },
+    "required_callback_fields": [
+      {
+        "source": "phy_driver",
+        "field": "config_init"
+      },
+      {
+        "source": "phy_driver",
+        "field": "config_intr"
+      },
+      {
+        "source": "phy_driver",
+        "field": "handle_interrupt"
+      }
+    ],
+    "deferred_callback_fields": [],
+    "callback_roles": {
+      "phy_driver.config_init": {
+        "status": "required",
+        "rust_surface": "impl phy::Driver for PhyQS6612::config_init",
+        "body_plan": [
+          "Write the vendor PCR initialization register through safe PHY register access only."
+        ]
+      },
+      "phy_driver.config_intr": {
+        "status": "required",
+        "rust_surface": "impl phy::Driver for PhyQS6612::config_intr",
+        "body_plan": [
+          "Model interrupt enable/disable through a typed PHY abstraction surface rather than raw `phydev->interrupts` inspection in the driver."
+        ]
+      },
+      "phy_driver.handle_interrupt": {
+        "status": "required",
+        "rust_surface": "impl phy::Driver for PhyQS6612::handle_interrupt",
+        "body_plan": [
+          "Return a typed interrupt outcome and keep `phy_error()` / `phy_trigger_machine()` inside the abstraction boundary."
+        ]
+      }
+    },
+    "module_shell": {
+      "module_macro_required": true,
+      "preferred_driver_type": "PhyQS6612",
+      "preferred_module_macro": "kernel::module_phy_driver!",
+      "device_table": [
+        "phy::DeviceId::new_with_driver::<PhyQS6612>()"
+      ],
+      "drivers": [
+        "PhyQS6612"
+      ],
+      "module_name": "qsemi_rust"
+    },
+    "private_state": {
+      "type_name": null,
+      "layout": null,
+      "fields": [],
+      "note": "The intended Rust qsemi driver should not require driver-owned private state for the first loop."
+    }
+  },
+  "oracle": {
+    "runner_id": "qemu-module-lifecycle",
+    "scenario_id": "module_load_unload",
+    "scenario_inputs": {
+      "module_name": "qsemi_rust",
+      "module_file_relpath_template": "drivers/net/phy/{module_id}_rust.ko",
+      "module_file_name_template": "{module_id}_rust.ko"
+    }
+  }
+}
