@@ -100,17 +100,11 @@
         ],
         "file": "rust/kernel/net/phy.rs",
         "must_contain": [
-          "unsafe extern \"C\" fn config_init_callback(",
           "unsafe extern \"C\" fn config_aneg_callback(",
           "unsafe extern \"C\" fn read_status_callback(",
-          "unsafe extern \"C\" fn config_intr_callback(",
-          "unsafe extern \"C\" fn handle_interrupt_callback(",
           "let dev = unsafe { Device::from_raw(phydev) };",
-          "T::config_init(dev)?;",
           "T::config_aneg(dev)?;",
-          "T::read_status(dev)?;",
-          "T::config_intr(dev, mode)?;",
-          "match T::handle_interrupt(dev) {"
+          "T::read_status(dev)?;"
         ],
         "must_not_contain": []
       }

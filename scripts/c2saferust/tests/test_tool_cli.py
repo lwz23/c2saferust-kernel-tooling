@@ -1224,6 +1224,38 @@ static struct phy_driver qsemi_driver = {
                 "\n".join(payload["suggested_kconfig_snippet"]),
             )
 
+    def test_et1011c_safety_policy_uses_only_core_phy_trampoline_requirements(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_sample_root(root)
+            policy = intake.build_safety_policy("drivers/net/phy/et1011c.c", repo_root=root)
+            rules = {
+                entry["id"]: entry
+                for entry in policy["abstraction_policy"]["required_soundness_rules"]
+            }
+            self.assertIn("phy-callback-trampolines", rules)
+            self.assertNotIn("phy-interrupt-callback-trampolines", rules)
+            must_contain = rules["phy-callback-trampolines"]["must_contain"]
+            self.assertNotIn('unsafe extern "C" fn config_init_callback(', must_contain)
+            self.assertNotIn('unsafe extern "C" fn config_intr_callback(', must_contain)
+            self.assertNotIn('unsafe extern "C" fn handle_interrupt_callback(', must_contain)
+
+    def test_qsemi_safety_policy_adds_irq_trampoline_requirements(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_sample_root(root)
+            policy = intake.build_safety_policy("drivers/net/phy/qsemi.c", repo_root=root)
+            rules = {
+                entry["id"]: entry
+                for entry in policy["abstraction_policy"]["required_soundness_rules"]
+            }
+            self.assertIn("phy-callback-trampolines", rules)
+            self.assertIn("phy-interrupt-callback-trampolines", rules)
+            must_contain = rules["phy-interrupt-callback-trampolines"]["must_contain"]
+            self.assertIn('unsafe extern "C" fn config_init_callback(', must_contain)
+            self.assertIn('unsafe extern "C" fn config_intr_callback(', must_contain)
+            self.assertIn('unsafe extern "C" fn handle_interrupt_callback(', must_contain)
+
     def test_generic_scenario_inputs_render_module_lifecycle_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

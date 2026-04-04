@@ -33,6 +33,22 @@
   },
   "safety": {
     "soundness_rule_templates": {
+      "phy-interrupt-callback-trampolines": {
+        "linked_obligation_ids": [
+          "phy-callback-pointer-aliasing"
+        ],
+        "file": "rust/kernel/net/phy.rs",
+        "must_contain": [
+          "unsafe extern \"C\" fn config_init_callback(",
+          "unsafe extern \"C\" fn config_intr_callback(",
+          "unsafe extern \"C\" fn handle_interrupt_callback(",
+          "let dev = unsafe { Device::from_raw(phydev) };",
+          "T::config_init(dev)?;",
+          "T::config_intr(dev, mode)?;",
+          "match T::handle_interrupt(dev) {"
+        ],
+        "must_not_contain": []
+      },
       "phy-interrupt-config-mode-surface": {
         "linked_obligation_ids": [
           "phy-interrupt-config-state"
