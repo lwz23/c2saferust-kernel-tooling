@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-scenario-profile",
+  "scenario_id": "goldfish_android_runtime",
+  "runner_id": "android-emulator-goldfish",
+  "log_prefix": "goldfish-oracle",
+  "summary_fields": [
+    "open_rc",
+    "ping_device_type_rc",
+    "allocate_block_rc",
+    "ping_allocate_rc",
+    "mmap_rc",
+    "invalid_mmap_rc",
+    "claim_shared_rc",
+    "unclaim_shared_rc",
+    "second_unclaim_shared_rc",
+    "ping_unallocate_rc",
+    "deallocate_block_rc",
+    "deallocate_missing_rc",
+    "unknown_ioctl_rc",
+    "close_rc",
+    "reopen_rc",
+    "reclose_rc"
+  ],
+  "comparison_fields": [
+    "open_rc",
+    "ping_device_type_rc",
+    "allocate_block_rc",
+    "ping_allocate_rc",
+    "mmap_rc",
+    "invalid_mmap_rc",
+    "claim_shared_rc",
+    "unclaim_shared_rc",
+    "second_unclaim_shared_rc",
+    "ping_unallocate_rc",
+    "deallocate_block_rc",
+    "deallocate_missing_rc",
+    "unknown_ioctl_rc",
+    "close_rc",
+    "reopen_rc",
+    "reclose_rc"
+  ],
+  "runtime_contract": {
+    "environment": "android-emulator",
+    "required_tools": [
+      "emulator",
+      "adb"
+    ],
+      "note": "The baseline goldfish ABI oracle runs a dedicated userspace tester inside an Android emulator guest."
+  },
+  "managed_guest_defaults": {
+    "avd_name": "gf_x86_64",
+    "image_dir": "~/android-sdk/system-images/android-34/google_apis/x86_64",
+    "emulator_args": [
+      "-no-window",
+      "-no-snapshot-load",
+      "-no-snapshot-save",
+      "-wipe-data",
+      "-gpu",
+      "swiftshader_indirect",
+      "-show-kernel"
+    ],
+    "adb_wait_timeout_sec": 120,
+    "boot_timeout_sec": 240,
+    "shutdown_timeout_sec": 30,
+    "boot_complete_props": [
+      "sys.boot_completed",
+      "dev.bootcomplete"
+    ]
+  },
+  "guest_tester": {
+    "source": "scripts/c2saferust/oracles/goldfish_address_space_tester.c",
+    "binary_name": "goldfish_address_space_tester",
+    "remote_path": "/data/local/tmp/goldfish_address_space_tester",
+    "target_triple": "x86_64-linux-android",
+    "api_level": 21,
+    "compiler_flags": []
+  },
+  "operation_contract": [
+    {
+      "id": "open-close",
+      "description": "Open and close `/dev/goldfish_address_space` without leaking file-owned state."
+    },
+    {
+      "id": "ping-device-type",
+      "description": "Exercise the minimal device-type ping that AOSP uses before host-memory allocation commands."
+    },
+    {
+      "id": "allocate-deallocate-block",
+      "description": "Exercise `ALLOCATE_BLOCK` and `DEALLOCATE_BLOCK` over the same handle and confirm symmetrical teardown."
+    },
+    {
+      "id": "ping-allocate-unallocate",
+      "description": "Exercise the host-memory allocator `PING` commands used by the public goldfish userspace stack."
+    },
+    {
+      "id": "mmap-valid-invalid",
+      "description": "Exercise both the accepted and rejected `mmap` paths for an allocated BAR-backed window."
+    },
+    {
+      "id": "claim-unclaim-shared",
+      "description": "Exercise `CLAIM_SHARED` and `UNCLAIM_SHARED`, including the second unclaim error path."
+    },
+    {
+      "id": "deallocate-missing",
+      "description": "Exercise the second `DEALLOCATE_BLOCK` error path after successful teardown."
+    },
+    {
+      "id": "unknown-ioctl",
+      "description": "Exercise an unknown ioctl number and require `-ENOTTY`."
+    },
+    {
+      "id": "reopen-close",
+      "description": "Reopen the miscdevice after a full close to catch file-owned lifecycle regressions."
+    }
+  ],
+  "result_success_marker": "[goldfish-oracle] RESULT=PASS"
+}

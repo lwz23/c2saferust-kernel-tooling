@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-benchmark-profile",
+  "benchmark_id": "rnull-calibration",
+  "module_id": "rnull",
+  "module_path": "drivers/block/null_blk/main.c",
+  "driver_rust_path": "drivers/block/rnull/rnull.rs",
+  "artifact_dir": "Documentation/rust/c2saferust/rnull",
+  "module_title": "rnull calibration benchmark",
+  "benchmark_track": "calibration",
+  "sample_tier": "historical",
+  "scope": "block_mq_plus_configfs_subset",
+  "quota_class": "calibration-only",
+  "target_runtime_state": "behavior_validated",
+  "claim_ceiling": "Calibration only; not counted as a formal phase-1 ground-truth benchmark.",
+  "blind_policy": {
+    "freeze_before_compare": true,
+    "incidental_path_exposure_policy": "path-only-no-body-no-diff",
+    "provenance_log_required": true
+  },
+  "search_hygiene": {
+    "forbidden_reference_paths": [
+      "drivers/block/rnull/rnull.rs",
+      "drivers/block/rnull/configfs.rs"
+    ],
+    "search_allowlist": [
+      "drivers/block/null_blk",
+      "drivers/block/rnull",
+      "rust/kernel",
+      "Documentation/rust/c2saferust/rnull"
+    ]
+  },
+  "difference_metrics": {
+    "api_markers": [
+      "GenDisk",
+      "TagSet",
+      "impl Operations for",
+      "configfs"
+    ],
+    "callback_markers": [
+      "fn queue_rq(",
+      "fn commit_rqs(",
+      "fn complete("
+    ]
+  },
+  "runtime_plan": {
+    "primary_runner": "configfs-lifecycle-calibration",
+    "minimum_state": "behavior_validated",
+    "note": "This sample remains calibration-only until a trusted configfs lifecycle oracle closes create/delete plus basic I/O."
+  }
+}

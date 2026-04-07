@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1160" viewBox="0 0 1900 1160" role="img" aria-labelledby="title desc">
+<title id="title">Goldfish C2SafeRust Workflow</title>
+<desc id="desc">Swimlane diagram showing how static tooling, coding agent, review agent, and differential oracle collaborate on the goldfish_address_space migration.</desc>
+<defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#475569"/></marker></defs>
+<rect x="0" y="0" width="1900" height="1160" fill="#FFFFFF"/>
+<text x="40" y="30" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="22" font-weight="700" fill="#0F172A">Goldfish C2SafeRust Workflow For An External Linux Driver</text>
+<text x="40" y="54" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" fill="#334155">The workflow combines static artifacts, a constrained coding agent, an independent review agent, and a baseline-vs-candidate differential oracle.</text>
+<rect x="40" y="70" width="1820" height="180" rx="18" ry="18" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.6"/>
+<rect x="40" y="70" width="200" height="180" rx="18" ry="18" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="62" y="122" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="17" font-weight="700" fill="#0F172A"><tspan x="62" dy="0">Researcher /</tspan><tspan x="62" dy="1.25em">Operator</tspan></text>
+<rect x="40" y="262" width="1820" height="180" rx="18" ry="18" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1.6"/>
+<rect x="40" y="262" width="200" height="180" rx="18" ry="18" fill="#FFFFFF" stroke="#93C5FD" stroke-width="1.2"/>
+<text x="62" y="314" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="17" font-weight="700" fill="#0F172A"><tspan x="62" dy="0">Static Toolchain</tspan></text>
+<rect x="40" y="454" width="1820" height="180" rx="18" ry="18" fill="#FFF7ED" stroke="#FDBA74" stroke-width="1.6"/>
+<rect x="40" y="454" width="200" height="180" rx="18" ry="18" fill="#FFFFFF" stroke="#FDBA74" stroke-width="1.2"/>
+<text x="62" y="506" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="17" font-weight="700" fill="#0F172A"><tspan x="62" dy="0">Coding Agent</tspan></text>
+<rect x="40" y="646" width="1820" height="180" rx="18" ry="18" fill="#FEF2F2" stroke="#FCA5A5" stroke-width="1.6"/>
+<rect x="40" y="646" width="200" height="180" rx="18" ry="18" fill="#FFFFFF" stroke="#FCA5A5" stroke-width="1.2"/>
+<text x="62" y="698" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="17" font-weight="700" fill="#0F172A"><tspan x="62" dy="0">Review Agent</tspan></text>
+<rect x="40" y="838" width="1820" height="180" rx="18" ry="18" fill="#ECFDF5" stroke="#86EFAC" stroke-width="1.6"/>
+<rect x="40" y="838" width="200" height="180" rx="18" ry="18" fill="#FFFFFF" stroke="#86EFAC" stroke-width="1.2"/>
+<text x="62" y="890" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="17" font-weight="700" fill="#0F172A"><tspan x="62" dy="0">Dynamic Oracle</tspan></text>
+<rect x="260" y="90" width="220" height="80" rx="14" ry="14" fill="#E2E8F0" stroke="#64748B" stroke-width="2"/>
+<text x="276" y="114" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="276" dy="0">Import External C Driver</tspan></text>
+<text x="276" y="136" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="276" dy="0">Collect source tree,</tspan><tspan x="276" dy="1.25em">headers,</tspan><tspan x="276" dy="1.25em">and intended landing path.</tspan></text>
+<rect x="790" y="90" width="220" height="80" rx="14" ry="14" fill="#E2E8F0" stroke="#64748B" stroke-width="2"/>
+<text x="806" y="114" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="806" dy="0">Constrain The Work</tspan></text>
+<text x="806" y="136" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="806" dy="0">Accept only artifact-backed</tspan><tspan x="806" dy="1.25em">claims and managed-file</tspan><tspan x="806" dy="1.25em">edits.</tspan></text>
+<rect x="1590" y="90" width="220" height="80" rx="14" ry="14" fill="#E2E8F0" stroke="#64748B" stroke-width="2"/>
+<text x="1606" y="114" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1606" dy="0">Feed Lessons Back</tspan></text>
+<text x="1606" y="136" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1606" dy="0">Update family/profile logic</tspan><tspan x="1606" dy="1.25em">for the next module.</tspan></text>
+<rect x="260" y="272" width="220" height="80" rx="14" ry="14" fill="#DBEAFE" stroke="#3B82F6" stroke-width="2"/>
+<text x="276" y="296" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="276" dy="0">bootstrap-module</tspan></text>
+<text x="276" y="318" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="276" dy="0">Profile the external module</tspan><tspan x="276" dy="1.25em">against kernel-tree landing.</tspan></text>
+<rect x="260" y="360" width="220" height="56" rx="12" ry="12" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="274" y="380" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan x="274" dy="0">translation-plan.json</tspan><tspan x="274" dy="1.25em">abstraction-plan.json</tspan></text>
+<rect x="520" y="272" width="220" height="80" rx="14" ry="14" fill="#DBEAFE" stroke="#3B82F6" stroke-width="2"/>
+<text x="536" y="296" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="536" dy="0">Gap Audits</tspan></text>
+<text x="536" y="318" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="536" dy="0">Audit bindings, helpers,</tspan><tspan x="536" dy="1.25em">Kbuild, and external</tspan><tspan x="536" dy="1.25em">headers.</tspan></text>
+<rect x="520" y="360" width="220" height="56" rx="12" ry="12" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="534" y="380" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan x="534" dy="0">binding-gap-audit.json</tspan><tspan x="534" dy="1.25em">helper-audit.json</tspan></text>
+<rect x="780" y="272" width="220" height="80" rx="14" ry="14" fill="#DBEAFE" stroke="#3B82F6" stroke-width="2"/>
+<text x="796" y="296" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="796" dy="0">Static Gates</tspan></text>
+<text x="796" y="318" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="796" dy="0">verify-safety and</tspan><tspan x="796" dy="1.25em">verify-command-semantics.</tspan></text>
+<rect x="780" y="360" width="220" height="56" rx="12" ry="12" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="794" y="380" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan x="794" dy="0">safety-verdict.json</tspan><tspan x="794" dy="1.25em">command-semantics-verdict.json</tspan></text>
+<rect x="1040" y="272" width="220" height="80" rx="14" ry="14" fill="#DBEAFE" stroke="#3B82F6" stroke-width="2"/>
+<text x="1056" y="296" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1056" dy="0">Agent Contract</tspan></text>
+<text x="1056" y="318" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1056" dy="0">Emit workflow scope,</tspan><tspan x="1056" dy="1.25em">gates, and allowlists.</tspan></text>
+<rect x="1040" y="360" width="220" height="56" rx="12" ry="12" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="1054" y="380" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan x="1054" dy="0">agent-workflow-plan.json</tspan><tspan x="1054" dy="1.25em">managed files + gates</tspan></text>
+<rect x="1590" y="272" width="220" height="80" rx="14" ry="14" fill="#DBEAFE" stroke="#3B82F6" stroke-width="2"/>
+<text x="1606" y="296" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1606" dy="0">Differential Verdict</tspan></text>
+<text x="1606" y="318" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1606" dy="0">Compare baseline and</tspan><tspan x="1606" dy="1.25em">candidate run-records.</tspan></text>
+<rect x="1590" y="360" width="220" height="56" rx="12" ry="12" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="1604" y="380" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan x="1604" dy="0">differential-oracle-run-</tspan><tspan x="1604" dy="1.25em">record.json</tspan><tspan x="1604" dy="1.25em">evidence_tier</tspan></text>
+<rect x="1040" y="472" width="220" height="80" rx="14" ry="14" fill="#FED7AA" stroke="#F97316" stroke-width="2"/>
+<text x="1056" y="496" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1056" dy="0">Implement Candidate</tspan></text>
+<text x="1056" y="518" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1056" dy="0">Write Rust driver and</tspan><tspan x="1056" dy="1.25em">needed kernel abstractions.</tspan></text>
+<rect x="1320" y="472" width="220" height="80" rx="14" ry="14" fill="#FED7AA" stroke="#F97316" stroke-width="2"/>
+<text x="1336" y="496" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1336" dy="0">Revise After Findings</tspan></text>
+<text x="1336" y="518" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1336" dy="0">Close soundness, lifecycle,</tspan><tspan x="1336" dy="1.25em">and scope regressions.</tspan></text>
+<rect x="1040" y="664" width="220" height="80" rx="14" ry="14" fill="#FECACA" stroke="#DC2626" stroke-width="2"/>
+<text x="1056" y="688" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1056" dy="0">Audit For Blockers</tspan></text>
+<text x="1056" y="710" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1056" dy="0">Publication, teardown,</tspan><tspan x="1056" dy="1.25em">mmap, and RFC cleanliness.</tspan></text>
+<rect x="1320" y="664" width="220" height="80" rx="14" ry="14" fill="#FECACA" stroke="#DC2626" stroke-width="2"/>
+<text x="1336" y="688" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1336" dy="0">Return Findings</tspan></text>
+<text x="1336" y="710" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1336" dy="0">Blocking findings and</tspan><tspan x="1336" dy="1.25em">residual limitations only.</tspan></text>
+<rect x="1040" y="856" width="220" height="80" rx="14" ry="14" fill="#D1FAE5" stroke="#10B981" stroke-width="2"/>
+<text x="1056" y="880" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1056" dy="0">Build Runtime Oracle</tspan></text>
+<text x="1056" y="902" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1056" dy="0">Compile guest tester and</tspan><tspan x="1056" dy="1.25em">prepare managed guest</tspan><tspan x="1056" dy="1.25em">assets.</tspan></text>
+<rect x="1040" y="944" width="220" height="56" rx="12" ry="12" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="1054" y="964" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan x="1054" dy="0">guest tester build</tspan><tspan x="1054" dy="1.25em">minimal guest / emulator assets</tspan></text>
+<rect x="1320" y="856" width="220" height="80" rx="14" ry="14" fill="#D1FAE5" stroke="#10B981" stroke-width="2"/>
+<text x="1336" y="880" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1336" dy="0">Run Baseline + Candidate</tspan></text>
+<text x="1336" y="902" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1336" dy="0">Use the same goldfish</tspan><tspan x="1336" dy="1.25em">device model and tester.</tspan></text>
+<rect x="1590" y="856" width="220" height="80" rx="14" ry="14" fill="#D1FAE5" stroke="#10B981" stroke-width="2"/>
+<text x="1606" y="880" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="15" font-weight="700" fill="#0F172A"><tspan x="1606" dy="0">Collect Run Records</tspan></text>
+<text x="1606" y="902" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="14" font-weight="400" fill="#0F172A"><tspan x="1606" dy="0">Persist baseline/candidate</tspan><tspan x="1606" dy="1.25em">records for field</tspan><tspan x="1606" dy="1.25em">comparison.</tspan></text>
+<rect x="1590" y="944" width="220" height="56" rx="12" ry="12" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="1604" y="964" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan x="1604" dy="0">oracle-baseline-run-record.json</tspan><tspan x="1604" dy="1.25em">oracle-candidate-run-record.json</tspan></text>
+<line x1="370.0" y1="170" x2="370.0" y2="272" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="480" y1="312.0" x2="520" y2="312.0" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="740" y1="312.0" x2="780" y2="312.0" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1000" y1="312.0" x2="1040" y2="312.0" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<polyline points="900.0,170 1025.0,170 1025.0,272 1150.0,272" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<polyline points="900.0,170 1025.0,170 1025.0,472 1150.0,472" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1150.0" y1="352" x2="1150.0" y2="472" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1150.0" y1="552" x2="1150.0" y2="664" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1260" y1="704.0" x2="1320" y2="704.0" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1430.0" y1="664" x2="1430.0" y2="552" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1320" y1="512.0" x2="1260" y2="512.0" stroke="#475569" stroke-width="2.2" stroke-dasharray="8 6" marker-end="url(#arrowhead)"/>
+<polyline points="1430.0,472 1160.0,472 1160.0,352 890.0,352" fill="none" stroke="#475569" stroke-width="2.2" stroke-dasharray="8 6" marker-end="url(#arrowhead)"/>
+<polyline points="1430.0,552 1290.0,552 1290.0,856 1150.0,856" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1260" y1="896.0" x2="1320" y2="896.0" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1540" y1="896.0" x2="1590" y2="896.0" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<polyline points="1700.0,856 1700.0,856 1700.0,352 1700.0,352" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<line x1="1700.0" y1="272" x2="1700.0" y2="170" stroke="#475569" stroke-width="2.2" marker-end="url(#arrowhead)"/>
+<text x="40" y="1052" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="16" font-weight="700" fill="#0F172A">Legend</text>
+<rect x="40" y="1070" width="28" height="18" rx="6" ry="6" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1.5"/>
+<text x="78" y="1084" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" fill="#334155">Static tooling / artifacts</text>
+<rect x="340" y="1070" width="28" height="18" rx="6" ry="6" fill="#FED7AA" stroke="#F97316" stroke-width="1.5"/>
+<text x="378" y="1084" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" fill="#334155">Coding agent</text>
+<rect x="640" y="1070" width="28" height="18" rx="6" ry="6" fill="#FECACA" stroke="#DC2626" stroke-width="1.5"/>
+<text x="678" y="1084" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" fill="#334155">Review agent</text>
+<rect x="940" y="1070" width="28" height="18" rx="6" ry="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1.5"/>
+<text x="978" y="1084" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" fill="#334155">Dynamic oracle</text>
+<rect x="1240" y="1070" width="28" height="18" rx="6" ry="6" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="1278" y="1084" font-family="Liberation Sans, DejaVu Sans, Noto Sans, sans-serif" font-size="12" fill="#334155">Artifact note</text>
+</svg>

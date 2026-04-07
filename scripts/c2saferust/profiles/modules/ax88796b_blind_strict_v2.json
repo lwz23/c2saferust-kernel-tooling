@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-module-profile",
+  "profile_id": "ax88796b_blind_strict_v2",
+  "family_id": "net-phy",
+  "rule_pack_ids": [
+    "net_phy_core_safety"
+  ],
+  "module_path": "drivers/net/phy/ax88796b.c",
+  "module_id": "ax88796b_blind_strict_v2",
+  "artifact_dir": "Documentation/rust/c2saferust/ax88796b_blind_strict_v2",
+  "driver_rust_path": "drivers/net/phy/ax88796b_rust.rs",
+  "kbuild": {
+    "rust_config_symbol": "AX88796B_RUST_PHY",
+    "rust_config_prompt": "Rust reference driver for Asix PHYs",
+    "rust_depends_on": "RUST_PHYLIB_ABSTRACTIONS && AX88796B_PHY",
+    "rust_help": [
+      "Uses the Rust reference driver for the Asix PHY family (ax88796b_rust.ko).",
+      "The intent is to stay within the current safe PHY abstraction subset."
+    ]
+  },
+  "build_validation": {
+    "module_lifecycle_config": {
+      "artifact_filename": "module-lifecycle.config",
+      "required_config_lines": [
+        "CONFIG_MODULES=y",
+        "CONFIG_RUST=y",
+        "CONFIG_PHYLIB=y",
+        "CONFIG_MDIO_DEVICE=y",
+        "CONFIG_RUST_PHYLIB_ABSTRACTIONS=y",
+        "CONFIG_AX88796B_PHY=m",
+        "CONFIG_AX88796B_RUST_PHY=y"
+      ]
+    }
+  },
+  "translation": {
+    "goal": "Constrain a strict blind-first `drivers/net/phy/ax88796b_rust.rs` candidate to a minimal, artifact-driven Rust PHY driver covering registration, `read_status`, `suspend`, `resume`, `soft_reset`, and `link_change_notify` for the Asix family without pre-seeding helper-level Rust answers.",
+    "abstraction_goal": "Keep the driver inside the existing safe PHY abstraction while covering the three Asix variants without driver-side `unsafe`, direct `bindings::*`, reference-driver leakage, or profile-supplied helper recipes.",
+    "mvp_scope": {
+      "target_command": "insmod ax88796b_rust.ko && rmmod ax88796b_rust",
+      "note": "The strict blind-first acceptance target is build plus lifecycle validation through the fallback oracle until a trusted PHY KUnit runner lands."
+    },
+    "required_callback_fields": [
+      {
+        "source": "phy_driver",
+        "field": "read_status"
+      },
+      {
+        "source": "phy_driver",
+        "field": "suspend"
+      },
+      {
+        "source": "phy_driver",
+        "field": "resume"
+      },
+      {
+        "source": "phy_driver",
+        "field": "soft_reset"
+      },
+      {
+        "source": "phy_driver",
+        "field": "link_change_notify"
+      }
+    ],
+    "deferred_callback_fields": [],
+    "callback_roles": {
+      "phy_driver.read_status": {
+        "status": "required",
+        "behavior_contract": [
+          "Mirror the C driver's link-update and status-refresh behavior using only the safe PHY abstraction surface.",
+          "Preserve the early return when the link remains down.",
+          "Recover negotiated link information from safe Clause 22 state instead of driver-side raw register access."
+        ],
+        "c_evidence": [
+          "!phydev->link"
+        ]
+      },
+      "phy_driver.suspend": {
+        "status": "required",
+        "behavior_contract": [
+          "Preserve the generic suspend behavior exposed by the safe PHY device surface instead of open-coding register writes."
+        ]
+      },
+      "phy_driver.resume": {
+        "status": "required",
+        "behavior_contract": [
+          "Preserve the generic resume behavior exposed by the safe PHY device surface instead of open-coding register writes."
+        ]
+      },
+      "phy_driver.soft_reset": {
+        "status": "required",
+        "behavior_contract": [
+          "Preserve the Asix reset callback semantics while staying inside the safe PHY reset lifecycle surface."
+        ]
+      },
+      "phy_driver.link_change_notify": {
+        "status": "required",
+        "behavior_contract": [
+          "Only run the reinitialization path when the device transitions through the no-link state.",
+          "Keep the notification callback inside the safe PHY device lifecycle surface."
+        ],
+        "c_evidence": [
+          "phydev->state == PHY_NOLINK"
+        ]
+      }
+    },
+    "driver_generation_rules": [
+      "Read only the current experiment artifacts plus the allowlisted generic PHY abstraction files before writing driver code.",
+      "Do not read, diff, or quote the upstream Rust reference driver or any archived blind benchmark report before the experiment is frozen.",
+      "Use `rust/kernel/net/phy.rs` and `rust/kernel/net/phy/reg.rs` only as the generic safe abstraction surface; keep all module-specific logic constrained by the generated artifact set.",
+      "Infer the concrete Rust helper mapping from the C source and the visible safe abstraction signatures; if the mapping is still ambiguous, stop and record a planner/profile gap instead of filling it with driver-side `unsafe`."
+    ],
+    "module_shell": {
+      "module_macro_required": true,
+      "preferred_driver_type": "PhyAX88772A / PhyAX88772C / PhyAX88796B",
+      "preferred_module_macro": "kernel::module_phy_driver!",
+      "device_table": [
+        "phy::DeviceId::new_with_driver::<PhyAX88772A>()",
+        "phy::DeviceId::new_with_driver::<PhyAX88772C>()",
+        "phy::DeviceId::new_with_driver::<PhyAX88796B>()"
+      ],
+      "drivers": [
+        "PhyAX88772A",
+        "PhyAX88772C",
+        "PhyAX88796B"
+      ],
+      "module_name": "ax88796b_rust"
+    },
+    "private_state": {
+      "type_name": null,
+      "layout": null,
+      "fields": [],
+      "note": "The strict blind-first Asix Rust PHY driver should not introduce per-device Rust private state."
+    }
+  },
+  "oracle": {
+    "runner_id": "qemu-module-lifecycle",
+    "scenario_id": "module_load_unload",
+    "scenario_inputs": {
+      "module_name": "ax88796b_rust",
+      "module_file_relpath_template": "drivers/net/phy/ax88796b_rust.ko",
+      "module_file_name_template": "ax88796b_rust.ko"
+    }
+  }
+}

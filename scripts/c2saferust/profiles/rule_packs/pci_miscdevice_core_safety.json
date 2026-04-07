@@ -1,0 +1,646 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-rule-pack",
+  "rule_pack_id": "pci_miscdevice_core_safety",
+  "analysis": {
+    "evidence_context_paths": {
+      "required_callbacks": "mvp_scope.required_callbacks",
+      "callback_calls": "source_inventory.callback_calls"
+    },
+    "unsafe_site_matchers": [
+      {
+        "id": "pci-driver-registration-ops",
+        "file_suffix": "rust/kernel/pci.rs",
+        "unsafe_kind": [
+          "unsafe-impl",
+          "unsafe-fn",
+          "unsafe-block"
+        ],
+        "enclosing_item_contains_any": [
+          "fn register",
+          "fn unregister"
+        ],
+        "obligation_ids": [
+          "pci-driver-registration-lifetime"
+        ]
+      },
+      {
+        "id": "pci-driver-layout-offsetof",
+        "file_suffix": "rust/kernel/pci.rs",
+        "unsafe_kind": "unsafe-impl",
+        "source_window_contains_any": [
+          "driver::DriverLayout for Adapter",
+          "DEVICE_DRIVER_OFFSET"
+        ],
+        "obligation_ids": [
+          "pci-driver-offsetof-layout"
+        ]
+      },
+      {
+        "id": "pci-device-id-layout",
+        "file_suffix": "rust/kernel/pci.rs",
+        "unsafe_kind": "unsafe-impl",
+        "excerpt_contains_any": [
+          "RawDeviceId for DeviceId",
+          "RawDeviceIdIndex for DeviceId"
+        ],
+        "obligation_ids": [
+          "pci-device-id-layout"
+        ]
+      },
+      {
+        "id": "pci-device-raw-cast-lifetime",
+        "file_suffix": "rust/kernel/pci.rs",
+        "unsafe_kind": [
+          "unsafe-block",
+          "unsafe-fn"
+        ],
+        "source_window_contains_any": [
+          "cast::<DeviceId>()",
+          "cast::<Device<device::CoreInternal>>()",
+          "drvdata_borrow::<",
+          "container_of!",
+          "&*pdev.cast()",
+          "Device::from_raw",
+          "dev_is_pci"
+        ],
+        "obligation_ids": [
+          "pci-device-raw-cast-lifetime"
+        ]
+      },
+      {
+        "id": "pci-device-send-sync",
+        "file_suffix": "rust/kernel/pci.rs",
+        "unsafe_kind": "unsafe-impl",
+        "excerpt_contains_any": [
+          "unsafe impl Send for Device",
+          "unsafe impl Sync for Device"
+        ],
+        "obligation_ids": [
+          "pci-device-send-sync"
+        ]
+      },
+      {
+        "id": "miscdevice-registration-lifetime",
+        "file_suffix": "rust/kernel/miscdevice.rs",
+        "unsafe_kind": [
+          "unsafe-fn",
+          "unsafe-impl",
+          "unsafe-block"
+        ],
+        "source_window_contains_any": [
+          "misc_register",
+          "misc_deregister",
+          "MiscDeviceRegistration",
+          "slot.write(Self {",
+          "&mut *slot",
+          "drop_in_place(slot)",
+          "owner: slot.cast_const()",
+          "RegistrationBacking<T>",
+          "container_of!",
+          "backing.owner"
+        ],
+        "obligation_ids": [
+          "miscdevice-registration-lifetime"
+        ]
+      },
+      {
+        "id": "miscdevice-static-fops-sync",
+        "file_suffix": "rust/kernel/miscdevice.rs",
+        "unsafe_kind": "unsafe-impl",
+        "excerpt_contains_any": [
+          "unsafe impl<T> Sync for AssertSync<T> {}"
+        ],
+        "source_window_contains_any": [
+          "static FOPS",
+          "file_operations"
+        ],
+        "obligation_ids": [
+          "miscdevice-static-fops-sync"
+        ]
+      },
+      {
+        "id": "miscdevice-file-private-data-lifecycle",
+        "file_suffix": "rust/kernel/miscdevice.rs",
+        "unsafe_kind": [
+          "unsafe-block",
+          "unsafe-fn"
+        ],
+        "source_window_contains_any": [
+          "private_data",
+          "into_foreign",
+          "from_foreign",
+          "borrow(private",
+          "File::from_raw_file"
+        ],
+        "obligation_ids": [
+          "miscdevice-file-private-data-lifecycle"
+        ]
+      },
+      {
+        "id": "miscdevice-callback-ffi-bridge",
+        "file_suffix": "rust/kernel/miscdevice.rs",
+        "unsafe_kind": [
+          "unsafe-fn",
+          "unsafe-token",
+          "unsafe-block"
+        ],
+        "enclosing_impl_contains_any": [
+          "MiscdeviceVTable"
+        ],
+        "obligation_ids": [
+          "miscdevice-callback-ffi-bridge"
+        ]
+      },
+      {
+        "id": "uaccess-copy-validation",
+        "file_suffix": "rust/kernel/uaccess.rs",
+        "unsafe_kind": "unsafe-block",
+        "source_window_contains_any": [
+          "copy_from_user",
+          "copy_to_user",
+          "_copy_from_user",
+          "_copy_to_user"
+        ],
+        "obligation_ids": [
+          "uaccess-copy-validation"
+        ]
+      },
+      {
+        "id": "uaccess-buffer-initialization",
+        "file_suffix": "rust/kernel/uaccess.rs",
+        "unsafe_kind": "unsafe-block",
+        "source_window_contains_any": [
+          "assume_init",
+          "inc_len(",
+          "MaybeUninit"
+        ],
+        "obligation_ids": [
+          "uaccess-buffer-initialization"
+        ]
+      },
+      {
+        "id": "uaccess-byte-reinterpretation",
+        "file_suffix": "rust/kernel/uaccess.rs",
+        "unsafe_kind": "unsafe-block",
+        "source_window_contains_any": [
+          "from_mut(",
+          "from_raw_parts_mut",
+          "as_mut_ptr()",
+          "as_const_ptr()"
+        ],
+        "obligation_ids": [
+          "uaccess-byte-reinterpretation"
+        ]
+      },
+      {
+        "id": "uaccess-cstr-construction",
+        "file_suffix": "rust/kernel/uaccess.rs",
+        "unsafe_kind": "unsafe-block",
+        "source_window_contains_any": [
+          "from_bytes_with_nul_unchecked",
+          "unwrap_unchecked",
+          "raw_strncpy_from_user"
+        ],
+        "obligation_ids": [
+          "uaccess-cstr-construction"
+        ]
+      },
+      {
+        "id": "page-owned-buffer-lifetime",
+        "file_suffix": "rust/kernel/page.rs",
+        "unsafe_kind": [
+          "unsafe-impl",
+          "unsafe-block",
+          "unsafe-fn"
+        ],
+        "obligation_ids": [
+          "page-owned-ping-buffer-lifetime"
+        ]
+      },
+      {
+        "id": "vma-wrapper-lifetime",
+        "file_suffix": "rust/kernel/mm/virt.rs",
+        "unsafe_kind": [
+          "unsafe-block",
+          "unsafe-fn"
+        ],
+        "obligation_ids": [
+          "vma-wrapper-lifetime"
+        ]
+      },
+      {
+        "id": "vma-pfn-remap",
+        "file_suffix": "rust/kernel/mm/virt.rs",
+        "unsafe_kind": [
+          "unsafe-block",
+          "unsafe-fn"
+        ],
+        "source_window_contains_any": [
+          "vm_iomap_memory",
+          "update_flags",
+          "VmaNew::from_raw",
+          "VM_IO",
+          "VM_DONTEXPAND",
+          "VM_DONTCOPY"
+        ],
+        "obligation_ids": [
+          "vma-pfn-remap"
+        ]
+      },
+      {
+        "id": "pci-io-raw-access-validity",
+        "file_suffix": "rust/kernel/pci/io.rs",
+        "unsafe_kind": [
+          "unsafe-block",
+          "unsafe-fn"
+        ],
+        "source_window_contains_any": [
+          "bindings::$c_fn",
+          "cfg_size",
+          "ConfigSpace",
+          "pci_request_region",
+          "pci_iomap"
+        ],
+        "obligation_ids": [
+          "pci-io-raw-access-validity"
+        ]
+      },
+      {
+        "id": "shared-bar-map-lifetime",
+        "file_suffix": "rust/kernel/pci/io.rs",
+        "unsafe_kind": [
+          "unsafe-block",
+          "unsafe-fn"
+        ],
+        "source_window_contains_any": [
+          "pci_request_region",
+          "pci_release_region",
+          "pci_iomap",
+          "do_release",
+          "Mmio::from_raw",
+          "memremap",
+          "memunmap"
+        ],
+        "obligation_ids": [
+          "shared-bar-map-lifetime"
+        ]
+      },
+      {
+        "id": "shared-bar-map-thread-safety",
+        "file_suffix": "rust/kernel/pci/io.rs",
+        "unsafe_kind": "unsafe-impl",
+        "excerpt_contains_any": [
+          "SharedMemoryBar"
+        ],
+        "obligation_ids": [
+          "shared-bar-map-thread-safety"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "soundness_rule_templates": {
+      "pci-driver-adapter-api": {
+        "requires_area": "pci",
+        "linked_obligation_ids": [
+          "pci-driver-registration-lifetime"
+        ],
+        "file": "rust/kernel/pci.rs",
+        "must_contain": [
+          "pub trait Driver: Send",
+          "fn probe(dev: &Device<device::Core>, id_info: &Self::IdInfo) -> impl PinInit<Self, Error>;",
+          "fn unbind(dev: &Device<device::Core>, this: Pin<&Self>)"
+        ],
+        "must_not_contain": []
+      },
+      "miscdevice-registration-raii": {
+        "requires_area": "miscdevice",
+        "linked_obligation_ids": [
+          "miscdevice-registration-lifetime",
+          "miscdevice-file-private-data-lifecycle",
+          "miscdevice-callback-ffi-bridge"
+        ],
+        "file": "rust/kernel/miscdevice.rs",
+        "must_contain": [
+          "pub struct MiscDeviceRegistration<",
+          "type RegistrationData: Send + Sync + 'static;",
+          "pub fn register_with_data(",
+          "bindings::misc_register",
+          "bindings::misc_deregister"
+        ],
+        "must_not_contain": []
+      },
+      "shared-memory-bar-owner": {
+        "requires_area": "shared_bar_map",
+        "linked_obligation_ids": [
+          "pci-io-raw-access-validity",
+          "shared-bar-map-lifetime",
+          "shared-bar-map-thread-safety"
+        ],
+        "file": "rust/kernel/pci/io.rs",
+        "must_contain": [
+          "pub struct SharedMemoryBar",
+          "pub fn phys_start(&self) -> bindings::resource_size_t",
+          "pub fn map_into_vma(&self, vma: &VmaNew) -> Result",
+          "bindings::memremap",
+          "bindings::memunmap"
+        ],
+        "must_not_contain": []
+      },
+      "vma-iomap-memory-wrapper": {
+        "requires_area": "vma_pfn_map",
+        "linked_obligation_ids": [
+          "vma-wrapper-lifetime",
+          "vma-pfn-remap"
+        ],
+        "file": "rust/kernel/mm/virt.rs",
+        "must_contain": [
+          "pub fn iomap_memory(&self, start: PhysAddr, len: usize) -> Result",
+          "bindings::vm_iomap_memory"
+        ],
+        "must_not_contain": []
+      },
+      "page-owned-ping-buffer-api": {
+        "requires_area": "page",
+        "linked_obligation_ids": [
+          "page-owned-ping-buffer-lifetime"
+        ],
+        "file": "rust/kernel/page.rs",
+        "must_contain": [
+          "pub fn phys_addr(&self) -> PhysAddr",
+          "pub fn read_slice(&self, dst: &mut [u8], offset: usize) -> Result",
+          "pub fn write_slice(&mut self, src: &[u8], offset: usize) -> Result",
+          "pub fn copy_from_user_slice(",
+          "pub fn fill_zero(&mut self, offset: usize, len: usize) -> Result"
+        ],
+        "must_not_contain": []
+      },
+      "safe-user-slice-api": {
+        "requires_area": "uaccess",
+        "linked_obligation_ids": [
+          "uaccess-copy-validation",
+          "uaccess-buffer-initialization",
+          "uaccess-byte-reinterpretation",
+          "uaccess-cstr-construction"
+        ],
+        "file": "rust/kernel/uaccess.rs",
+        "must_contain": [
+          "pub struct UserPtr",
+          "pub struct UserSlice",
+          "pub fn new(ptr: UserPtr, length: usize) -> Self"
+        ],
+        "must_not_contain": []
+      }
+    }
+  },
+  "unsafe": {
+    "unsafe_obligation_templates": {
+      "pci-driver-registration-lifetime": {
+        "phase": "mvp",
+        "area": "pci",
+        "category": "lifetime",
+        "evidence_literals": [
+          "__pci_register_driver",
+          "pci_unregister_driver"
+        ],
+        "obligation": "The Rust PCI adapter must register and unregister exactly once, and the bound driver state must not outlive the kernel-managed PCI device.",
+        "preferred_discharge": "Keep PCI registration inside `kernel::pci` RAII machinery and avoid raw driver registration calls in driver code.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "pci-driver-offsetof-layout": {
+        "phase": "mvp",
+        "area": "pci",
+        "category": "layout-offsetof",
+        "evidence_literals": [
+          "DriverLayout",
+          "DEVICE_DRIVER_OFFSET"
+        ],
+        "obligation": "The Rust PCI adapter must preserve the exact embedding/layout relationship between `struct pci_driver` and the generic driver core so registration glue computes the correct offset.",
+        "preferred_discharge": "Keep the `driver::DriverLayout` impl and `DEVICE_DRIVER_OFFSET` definition inside `kernel::pci`, justified directly from the C embedding layout.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "pci-device-id-layout": {
+        "phase": "mvp",
+        "area": "pci",
+        "category": "layout",
+        "evidence_literals": [
+          "RawDeviceId",
+          "RawDeviceIdIndex",
+          "struct pci_device_id"
+        ],
+        "obligation": "The Rust PCI device-id wrapper must stay layout-compatible with `struct pci_device_id`, including the location of `driver_data` used by the device table machinery.",
+        "preferred_discharge": "Keep `DeviceId` `#[repr(transparent)]` over `bindings::pci_device_id` and centralize raw trait impls inside `kernel::pci`.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "pci-device-raw-cast-lifetime": {
+        "phase": "mvp",
+        "area": "pci",
+        "category": "pointer-lifetime",
+        "evidence_literals": [
+          "cast::<Device<device::CoreInternal>>()",
+          "drvdata_borrow",
+          "container_of!"
+        ],
+        "obligation": "Raw conversions between C `pci_dev` storage and Rust wrappers must preserve the kernel-owned object lifetime and callback invariants.",
+        "preferred_discharge": "Keep all `pci_dev` pointer casts and `drvdata` borrows in `kernel::pci`, and expose only typed references to driver code.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "pci-device-send-sync": {
+        "phase": "mvp",
+        "area": "pci",
+        "category": "thread-safety",
+        "evidence_literals": [
+          "unsafe impl Send for Device",
+          "unsafe impl Sync for Device"
+        ],
+        "obligation": "Any `Send`/`Sync` claim for the Rust PCI device wrapper must match the thread-safety guarantees of the underlying kernel device object.",
+        "preferred_discharge": "Keep `Send`/`Sync` impls on the wrapper only, justify them from kernel device lifetime rules, and never let drivers construct raw device wrappers themselves.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "miscdevice-registration-lifetime": {
+        "phase": "mvp",
+        "area": "miscdevice",
+        "category": "lifetime",
+        "evidence_literals": [
+          "misc_register",
+          "misc_deregister"
+        ],
+        "obligation": "The miscdevice registration created from PCI probe must unregister exactly once and stay valid for the lifetime of the bound driver object.",
+        "preferred_discharge": "Store `MiscDeviceRegistration<T>` inside the driver-owned Rust state so deregistration happens via drop.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "miscdevice-static-fops-sync": {
+        "phase": "mvp",
+        "area": "miscdevice",
+        "category": "thread-safety",
+        "evidence_literals": [
+          "unsafe impl<T> Sync for AssertSync<T>",
+          "static FOPS",
+          "file_operations"
+        ],
+        "obligation": "Any helper that marks a miscdevice `file_operations` table as `Sync` must only wrap fully initialized immutable static storage, so the driver-specific fops table can be shared without mutation races or lifetime holes.",
+        "preferred_discharge": "Keep the `AssertSync` wrapper local to `declare_misc_device_fops!`, use it only for immutable static `file_operations` tables, and route module pinning through `fops.owner`.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "miscdevice-file-private-data-lifecycle": {
+        "phase": "mvp",
+        "area": "miscdevice",
+        "category": "file-private-data",
+        "evidence_literals": [
+          "private_data",
+          "into_foreign",
+          "from_foreign",
+          "borrow(private)"
+        ],
+        "obligation": "Miscdevice file-private data must transition soundly between open, runtime callbacks, and release without double-free, use-after-free, or mismatched ownership conversions.",
+        "preferred_discharge": "Keep file-private state ownership and borrows entirely inside `kernel::miscdevice`, with the driver only observing typed Rust state.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "miscdevice-callback-ffi-bridge": {
+        "phase": "mvp",
+        "area": "miscdevice",
+        "category": "ffi-bridge",
+        "evidence_literals": [
+          "unsafe extern \"C\" fn open",
+          "unsafe extern \"C\" fn release",
+          "unsafe extern \"C\" fn mmap",
+          "unsafe extern \"C\" fn ioctl"
+        ],
+        "obligation": "The `file_operations` vtable bridge must decode raw C callback inputs into Rust wrapper types without violating aliasing, lifetime, or callback ordering invariants.",
+        "preferred_discharge": "Keep all raw callback trampolines in `kernel::miscdevice` and expose only typed trait methods to the driver.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "uaccess-copy-validation": {
+        "phase": "mvp",
+        "area": "uaccess",
+        "category": "user-memory",
+        "evidence_literals": [
+          "copy_from_user",
+          "copy_to_user",
+          "_copy_from_user",
+          "_copy_to_user"
+        ],
+        "obligation": "User memory reads and writes must avoid double-fetch and length/typing bugs; driver code should operate through a typed `uaccess` surface rather than raw copy helpers.",
+        "preferred_discharge": "Use `UserPtr`/`UserSlice`-based wrappers and validate decoded command payloads before acting on them.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "uaccess-buffer-initialization": {
+        "phase": "mvp",
+        "area": "uaccess",
+        "category": "buffer-init",
+        "evidence_literals": [
+          "MaybeUninit",
+          "assume_init",
+          "inc_len"
+        ],
+        "obligation": "Any buffer filled from userspace must only be observed as initialized after the copy helpers report success and the initialized length is tracked correctly.",
+        "preferred_discharge": "Centralize `MaybeUninit` handling in `kernel::uaccess` and only return initialized Rust values after checked copies succeed.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "uaccess-byte-reinterpretation": {
+        "phase": "mvp",
+        "area": "uaccess",
+        "category": "byte-reinterpretation",
+        "evidence_literals": [
+          "from_raw_parts_mut",
+          "from_mut"
+        ],
+        "obligation": "Byte-slice reinterpretation between typed buffers and raw userspace copy regions must preserve alignment, size, and mutability invariants.",
+        "preferred_discharge": "Keep byte reinterpretation helpers in `kernel::uaccess` and expose only typed read/write APIs to the driver.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "uaccess-cstr-construction": {
+        "phase": "mvp",
+        "area": "uaccess",
+        "category": "cstr",
+        "evidence_literals": [
+          "from_bytes_with_nul_unchecked",
+          "unwrap_unchecked",
+          "raw_strncpy_from_user"
+        ],
+        "obligation": "Constructing C strings from userspace buffers must preserve NUL-termination and bounds guarantees before returning a `CStr` view.",
+        "preferred_discharge": "Keep string-copy and `CStr` construction unsafe blocks in `kernel::uaccess`, returning only validated `CStr` values to drivers.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "page-owned-ping-buffer-lifetime": {
+        "phase": "mvp",
+        "area": "page",
+        "category": "buffer-lifetime",
+        "evidence_literals": [
+          "__get_free_page",
+          "virt_to_phys",
+          "free_page"
+        ],
+        "obligation": "The page-backed request buffer shared with the device/host must stay allocated for the lifetime of the owning Rust file state, and page-local reads/writes/copies must remain within bounds.",
+        "preferred_discharge": "Keep the buffer inside `page::Page`, expose only bounded helpers plus `phys_addr()`, and tie it to the file-owned Rust state.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "vma-wrapper-lifetime": {
+        "phase": "mvp",
+        "area": "vma_pfn_map",
+        "category": "wrapper-lifetime",
+        "evidence_literals": [
+          "from_raw",
+          "update_flags",
+          "vm_insert_page"
+        ],
+        "obligation": "The Rust VMA wrapper must only dereference `vm_area_struct` pointers while the kernel guarantees the VMA lifetime and the documented mmap/VMA lock state.",
+        "preferred_discharge": "Keep raw `vm_area_struct` access, flag mutation, and page-insert helpers inside `kernel::mm::virt`, exposing only typed `VmaRef`/`VmaNew` methods to drivers.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "vma-pfn-remap": {
+        "phase": "mvp",
+        "area": "vma_pfn_map",
+        "category": "mapping",
+        "evidence_literals": [
+          "vm_iomap_memory",
+          "VM_IO",
+          "VM_DONTEXPAND",
+          "VM_DONTCOPY"
+        ],
+        "obligation": "Mapping PFNs into a userspace VMA requires proving alignment, flag, and lifetime constraints for the exported physical range.",
+        "preferred_discharge": "Discharge this through `VmaNew::iomap_memory`, which keeps PFN-remap details inside the MM abstraction instead of the driver.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "pci-io-raw-access-validity": {
+        "phase": "mvp",
+        "area": "shared_bar_map",
+        "category": "io-access",
+        "evidence_literals": [
+          "ConfigSpace",
+          "cfg_size",
+          "pci_iomap"
+        ],
+        "obligation": "Raw PCI BAR or config-space accesses must stay inside typed PCI I/O abstractions so address validation, resource ownership, and raw pointer conversions never leak into driver code.",
+        "preferred_discharge": "Keep raw config-space and BAR access in `kernel::pci::io`, and let drivers operate only through typed region owners and safe accessors.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "shared-bar-map-lifetime": {
+        "phase": "mvp",
+        "area": "shared_bar_map",
+        "category": "mapping-lifetime",
+        "evidence_literals": [
+          "ioremap",
+          "memremap",
+          "pci_request_region"
+        ],
+        "obligation": "BAR/shared-memory mappings must be tied to PCI resource lifetime and unmapped exactly once on teardown.",
+        "preferred_discharge": "Discharge this through a dedicated PCI BAR owner such as `pci::SharedMemoryBar`, which owns BAR reservation and mapping teardown outside the driver.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "shared-bar-map-thread-safety": {
+        "phase": "mvp",
+        "area": "shared_bar_map",
+        "category": "thread-safety",
+        "evidence_literals": [
+          "unsafe impl Send for SharedMemoryBar",
+          "unsafe impl Sync for SharedMemoryBar"
+        ],
+        "obligation": "Any `Send`/`Sync` claim for the shared BAR owner must match the kernel guarantees of the reserved BAR mapping and only expose thread-safe operations.",
+        "preferred_discharge": "Keep `Send`/`Sync` on `SharedMemoryBar` inside `kernel::pci::io`, and only expose immutable metadata queries plus VMA mapping helpers to drivers.",
+        "allowed_unsafe_location": "abstraction-only"
+      }
+    }
+  }
+}

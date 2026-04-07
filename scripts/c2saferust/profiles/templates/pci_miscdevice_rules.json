@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-template-profile",
+  "template_id": "pci_miscdevice_rules",
+  "rule_pack_ids": [
+    "pci_miscdevice_core_safety"
+  ],
+  "analysis": {
+    "source_model": "pci_miscdevice"
+  },
+  "translation": {
+    "allowed_driver_surfaces": [
+      "kernel::pci::{self, Driver, DeviceId}",
+      "kernel::module_pci_driver!",
+      "kernel::miscdevice::{self, MiscDeviceRegistration, MiscDeviceOptions}",
+      "kernel::page::{Page, PAGE_SIZE, page_align}",
+      "kernel::io::PhysAddr",
+      "kernel::uaccess::{UserPtr, UserSlice}",
+      "kernel::mm::virt::VmaNew"
+    ],
+    "forbidden_driver_calls": [
+      "bindings::__pci_register_driver",
+      "bindings::pci_unregister_driver",
+      "bindings::misc_register",
+      "bindings::misc_deregister",
+      "bindings::copy_to_user",
+      "bindings::copy_from_user",
+      "bindings::remap_pfn_range"
+    ],
+    "driver_policy": {
+      "driver_zero_unsafe": true,
+      "driver_zero_bindings": true,
+      "driver_zero_extern_c": true
+    },
+    "driver_generation_rules": [
+      "Driver code may rely on `kernel::pci`, `kernel::miscdevice`, `kernel::uaccess`, and `kernel::mm::virt` only through the artifact-approved surfaces.",
+      "Keep PCI registration, miscdevice registration, user-copy, page ownership, BAR mapping, and PFN/VMA mapping details inside abstractions; driver code must not call raw helpers directly.",
+      "Only enable `ioctl` / `compat_ioctl` / `mmap` once the corresponding abstraction obligations are explicitly discharged in the generated artifacts."
+    ]
+  },
+  "safety": {
+    "driver_policy": {
+      "zero_unsafe": true,
+      "zero_bindings": true,
+      "zero_extern_c": true,
+      "required_crate_attributes": [
+        "#![forbid(unsafe_code)]"
+      ],
+      "forbidden_tokens": [
+        "unsafe",
+        "bindings::",
+        "extern \"C\"",
+        "*mut ",
+        "*const "
+      ]
+    },
+    "abstraction_allowlist_prefixes": [
+      "rust/kernel/pci.rs",
+      "rust/kernel/pci/",
+      "rust/kernel/miscdevice.rs",
+      "rust/kernel/page.rs",
+      "rust/kernel/uaccess.rs",
+      "rust/kernel/mm/"
+    ]
+  },
+  "unsafe": {
+    "driver_side_rules": [
+      "Do not use `unsafe` in driver code, including `unsafe impl`, `unsafe fn`, or `unsafe {}` blocks.",
+      "Do not reference `bindings::*` directly from driver code; route constants and types through approved abstractions.",
+      "Do not perform raw BAR mapping, raw miscdevice registration, raw page allocation/address translation, or raw user-copy calls inside the driver surface.",
+      "Only enable `ioctl` and `mmap` through discharged abstractions for page-backed ping state, shared BAR ownership, and VMA mapping."
+    ]
+  }
+}

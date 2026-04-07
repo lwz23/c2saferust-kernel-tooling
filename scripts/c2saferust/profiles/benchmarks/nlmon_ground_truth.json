@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-benchmark-profile",
+  "benchmark_id": "nlmon-ground-truth",
+  "module_profile_id": "nlmon",
+  "module_title": "nlmon blind-first ground-truth benchmark",
+  "benchmark_track": "formal-ground-truth",
+  "sample_tier": "small",
+  "scope": "full_driver",
+  "quota_class": "phase1-formal",
+  "target_runtime_state": "differential_validated",
+  "claim_ceiling": "Blind-first runtime differential against the in-tree nlmon Rust reference under the configured smoke scope.",
+  "blind_policy": {
+    "freeze_before_compare": true,
+    "incidental_path_exposure_policy": "path-only-no-body-no-diff",
+    "provenance_log_required": true
+  },
+  "search_hygiene": {
+    "forbidden_reference_paths": [
+      "drivers/net/nlmon_rust.rs"
+    ],
+    "search_allowlist": [
+      "drivers/net",
+      "include",
+      "net",
+      "rust",
+      "Documentation/rust/c2saferust/nlmon"
+    ]
+  },
+  "difference_metrics": {
+    "api_markers": [
+      "rtnl::Registration",
+      "impl netdevice::Operations",
+      "impl rtnl::Driver",
+      "netlink_tap::Tap",
+      "stats::dev_lstats_add"
+    ],
+    "callback_markers": [
+      "fn setup(",
+      "fn validate(",
+      "fn open(",
+      "fn stop(",
+      "fn start_xmit("
+    ],
+    "teardown_markers": [
+      "stop",
+      "remove",
+      "unregister",
+      "drop"
+    ]
+  },
+  "runtime_plan": {
+    "primary_runner": "qemu-scenario",
+    "minimum_state": "differential_validated"
+  }
+}

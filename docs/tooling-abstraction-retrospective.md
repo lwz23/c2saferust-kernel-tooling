@@ -103,7 +103,7 @@ blind-rust / 手工试验分支，也不把官方已有 Rust 驱动算成工具�
 
 工作树：
 
-- `/home/lwz/rfl-dev/worktrees/nlmon-tooling-clean-v1`
+- `/home/lwz/rfl-dev/archive/tool-flow-history/nlmon-tooling-clean-v1`
 
 工具产物结论：
 
@@ -126,7 +126,7 @@ blind-rust / 手工试验分支，也不把官方已有 Rust 驱动算成工具�
 
 工作树：
 
-- `/home/lwz/rfl-dev/worktrees/nlmon-tooling-clean-v1`
+- `/home/lwz/rfl-dev/archive/tool-flow-history/nlmon-tooling-clean-v1`
 
 工具产物结论：
 
@@ -143,8 +143,8 @@ blind-rust / 手工试验分支，也不把官方已有 Rust 驱动算成工具�
 
 工作树：
 
-- `/home/lwz/rfl-dev/worktrees/phy-reference-clean-v1`
-- `/home/lwz/rfl-dev/worktrees/phy-reference-clean-v2-qsemi`
+- `/home/lwz/rfl-dev/archive/tool-flow-history/phy-reference-clean-v1`
+- `/home/lwz/rfl-dev/archive/tool-flow-history/phy-reference-clean-v2-qsemi`
 
 工具产物结论：
 
@@ -164,7 +164,7 @@ blind-rust / 手工试验分支，也不把官方已有 Rust 驱动算成工具�
 
 工作树：
 
-- `/home/lwz/rfl-dev/worktrees/phy-reference-clean-v2-qsemi`
+- `/home/lwz/rfl-dev/archive/tool-flow-history/phy-reference-clean-v2-qsemi`
 
 工具产物结论：
 

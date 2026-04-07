@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-scenario-profile",
+  "scenario_id": "goldfish_minimal_guest_runtime",
+  "runner_id": "android-emulator-goldfish",
+  "log_prefix": "goldfish-oracle",
+  "summary_fields": [
+    "open_rc",
+    "ping_device_type_rc",
+    "allocate_block_rc",
+    "ping_allocate_rc",
+    "mmap_rc",
+    "invalid_mmap_rc",
+    "claim_shared_rc",
+    "unclaim_shared_rc",
+    "second_unclaim_shared_rc",
+    "ping_unallocate_rc",
+    "deallocate_block_rc",
+    "deallocate_missing_rc",
+    "unknown_ioctl_rc",
+    "close_rc",
+    "reopen_rc",
+    "reclose_rc"
+  ],
+  "comparison_fields": [
+    "open_rc",
+    "ping_device_type_rc",
+    "allocate_block_rc",
+    "ping_allocate_rc",
+    "mmap_rc",
+    "invalid_mmap_rc",
+    "claim_shared_rc",
+    "unclaim_shared_rc",
+    "second_unclaim_shared_rc",
+    "ping_unallocate_rc",
+    "deallocate_block_rc",
+    "deallocate_missing_rc",
+    "unknown_ioctl_rc",
+    "close_rc",
+    "reopen_rc",
+    "reclose_rc"
+  ],
+  "runtime_contract": {
+    "environment": "android-emulator-minimal-linux",
+    "required_tools": [
+      "emulator"
+    ],
+    "note": "The minimal goldfish runtime oracle keeps the Android emulator only for the goldfish hardware model and replaces Android userspace with a controlled initramfs guest."
+  },
+  "managed_guest_defaults": {
+    "enabled": true,
+    "boot_mode": "minimal-linux",
+    "label": "candidate",
+    "kernel_source": "build-tree",
+    "image_dir": "~/android-sdk/system-images/android-34/google_apis/x86_64",
+    "serial_port_base": 5560,
+    "log_filename": "minimal-guest.log",
+    "emulator_args": [
+      "-no-window",
+      "-no-snapshot-load",
+      "-no-snapshot-save",
+      "-wipe-data",
+      "-gpu",
+      "off",
+      "-show-kernel"
+    ],
+    "boot_timeout_sec": 90,
+    "shutdown_timeout_sec": 15,
+    "kernel_cmdline": "console=ttyS0 rdinit=/init nokaslr panic=-1"
+  },
+  "guest_tester": {
+    "source": "scripts/c2saferust/oracles/goldfish_address_space_tester.c",
+    "binary_name": "goldfish_address_space_tester",
+    "guest_path": "bin/goldfish_address_space_tester",
+    "build_mode": "linux-static",
+    "compiler_flags": []
+  },
+  "script_lines": [
+    "#!/bin/sh",
+    "export PATH=/bin:/sbin",
+    "mount -t proc proc /proc",
+    "mount -t sysfs sysfs /sys",
+    "mount -t devtmpfs devtmpfs /dev",
+    "mkdir -p /tmp /run",
+    "mknod /dev/console c 5 1 2>/dev/null || true",
+    "mknod /dev/null c 1 3 2>/dev/null || true",
+    "echo \"[{log_prefix}] begin minimal guest oracle\"",
+    "echo \"[{log_prefix}] device_node={device_node}\"",
+    "i=0",
+    "while [ ! -e {device_node} ] && [ $i -lt 30 ]; do",
+    "    i=$((i + 1))",
+    "    sleep 1",
+    "done",
+    "if [ ! -e {device_node} ]; then",
+    "    echo \"[{log_prefix}] DEVICE_NODE_MISSING=1\"",
+    "    echo \"[{log_prefix}] RESULT=FAIL\"",
+    "    poweroff -f",
+    "fi",
+    "{guest_tester_path} >/tmp/goldfish-oracle.txt 2>&1",
+    "tester_rc=$?",
+    "cat /tmp/goldfish-oracle.txt",
+    "echo \"[{log_prefix}] tester_exit_rc=$tester_rc\"",
+    "poweroff -f"
+  ],
+  "operation_contract": [
+    {
+      "id": "open-close",
+      "description": "Open and close `/dev/goldfish_address_space` without leaking file-owned state."
+    },
+    {
+      "id": "ping-device-type",
+      "description": "Exercise the minimal device-type ping that AOSP uses before host-memory allocation commands."
+    },
+    {
+      "id": "allocate-deallocate-block",
+      "description": "Exercise `ALLOCATE_BLOCK` and `DEALLOCATE_BLOCK` over the same handle and confirm symmetrical teardown."
+    },
+    {
+      "id": "ping-allocate-unallocate",
+      "description": "Exercise the host-memory allocator `PING` commands used by the public goldfish userspace stack."
+    },
+    {
+      "id": "mmap-valid-invalid",
+      "description": "Exercise both the accepted and rejected `mmap` paths for an allocated BAR-backed window."
+    },
+    {
+      "id": "claim-unclaim-shared",
+      "description": "Exercise `CLAIM_SHARED` and `UNCLAIM_SHARED`, including the second unclaim error path."
+    },
+    {
+      "id": "deallocate-missing",
+      "description": "Exercise the second `DEALLOCATE_BLOCK` error path after successful teardown."
+    },
+    {
+      "id": "unknown-ioctl",
+      "description": "Exercise an unknown ioctl number and require `-ENOTTY`."
+    },
+    {
+      "id": "reopen-close",
+      "description": "Reopen the miscdevice after a full close to catch file-owned lifecycle regressions."
+    }
+  ],
+  "result_success_marker": "[goldfish-oracle] RESULT=PASS"
+}

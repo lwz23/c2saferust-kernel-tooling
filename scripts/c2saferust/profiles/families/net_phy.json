@@ -7,7 +7,7 @@
   "direct_ffi_candidates": {},
   "default_binding_header_decision": {
     "action": "handled_by_rust_abstraction",
-    "reason": "Rust PHY drivers should default to the existing `kernel::net::phy` and `kernel::uapi` surfaces instead of importing legacy C headers into bindgen.",
+    "reason": "Rust PHY drivers should stay within the existing `kernel::net::phy` abstraction instead of importing legacy PHYLIB headers into bindgen.",
     "required_symbols": [],
     "mvp_blocking": false
   },
@@ -58,24 +58,6 @@
         "rust/kernel/net/phy.rs",
         "rust/kernel/net.rs"
       ]
-    },
-    "phy_config_aneg": {
-      "patterns": [
-        "genphy_config_aneg"
-      ],
-      "reason": "Some simple C22 PHY drivers rely on the generic PHYLIB autoneg helper from `config_aneg`.",
-      "required_surface": [
-        "Expose a safe `phy::Device::genphy_config_aneg()` wrapper so drivers do not call PHYLIB bindings directly."
-      ],
-      "deferred_surface": [],
-      "depends_on_artifacts": [],
-      "preferred_files": [
-        "rust/kernel/net/phy.rs"
-      ],
-      "implementation_markers": [
-        "pub fn genphy_config_aneg(&mut self) -> Result {",
-        "bindings::__genphy_config_aneg"
-      ]
     }
   },
   "translation": {
@@ -86,6 +68,9 @@
         "Keep this callback outside the first Rust loop until the corresponding PHY abstraction surface exists and is reflected in the artifacts."
       ]
     }
+  },
+  "analysis": {
+    "source_model": "phy_driver"
   },
   "oracle": {
     "runner": "qemu-module-lifecycle"

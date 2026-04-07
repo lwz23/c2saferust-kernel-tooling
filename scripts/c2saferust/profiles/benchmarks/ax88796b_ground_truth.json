@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-benchmark-profile",
+  "benchmark_id": "ax88796b-ground-truth",
+  "module_profile_id": "ax88796b",
+  "module_title": "ax88796b blind-first ground-truth benchmark",
+  "benchmark_track": "formal-ground-truth",
+  "sample_tier": "small",
+  "scope": "full_driver",
+  "quota_class": "phase1-formal",
+  "target_runtime_state": "lifecycle_validated",
+  "claim_ceiling": "Lifecycle validation only unless a trusted PHY runtime harness closes the callback behavior surface.",
+  "blind_policy": {
+    "freeze_before_compare": true,
+    "incidental_path_exposure_policy": "path-only-no-body-no-diff",
+    "provenance_log_required": true
+  },
+  "search_hygiene": {
+    "forbidden_reference_paths": [
+      "drivers/net/phy/ax88796b_rust.rs"
+    ],
+    "search_allowlist": [
+      "drivers/net/phy",
+      "include/linux/phy.h",
+      "rust/kernel/net",
+      "Documentation/rust/c2saferust/ax88796b"
+    ]
+  },
+  "difference_metrics": {
+    "api_markers": [
+      "kernel::module_phy_driver!",
+      "phy::DeviceId::new_with_driver",
+      "impl Driver for",
+      "dev.genphy_suspend()",
+      "dev.genphy_resume()",
+      "dev.genphy_soft_reset()"
+    ],
+    "callback_markers": [
+      "fn read_status(",
+      "fn suspend(",
+      "fn resume(",
+      "fn soft_reset(",
+      "fn link_change_notify("
+    ],
+    "teardown_markers": [
+      "suspend",
+      "resume",
+      "remove",
+      "drop",
+      "unregister"
+    ]
+  },
+  "runtime_plan": {
+    "primary_runner": "kunit-synthetic-mdio",
+    "fallback_runner": "qemu-module-lifecycle",
+    "minimum_state": "lifecycle_validated",
+    "required_callbacks": [
+      "probe",
+      "soft_reset",
+      "read_status",
+      "link_change_notify"
+    ],
+    "note": "If no trusted phylib data-plane harness is available, the sample must still prove probe/init/callback lifecycle coverage through a synthetic MDIO KUnit path."
+  }
+}

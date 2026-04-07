@@ -121,10 +121,14 @@ def load_scenario_profile(scenario_id: str) -> dict:
     return scenario
 
 
-def load_module_profile(module_path: str | Path) -> dict:
-    module_path = str(Path(module_path))
-    module_profile_path = _profile_path("modules", "module_path", module_path)
-    module_profile = _load_json(module_profile_path)
+def load_benchmark_profile(benchmark_id: str) -> dict:
+    benchmark_path = _profile_path("benchmarks", "benchmark_id", benchmark_id)
+    benchmark = _load_json(benchmark_path)
+    benchmark["profile_sources"] = [_rel(benchmark_path)]
+    return benchmark
+
+
+def _finalize_module_profile(module_profile: dict, module_profile_path: Path, module_path: str | Path) -> dict:
     family = load_family_profile(module_profile["family_id"])
     merged = _deep_merge(family, module_profile)
     rule_pack_ids = _merge_id_list(family.get("rule_pack_ids"), module_profile.get("rule_pack_ids"))
@@ -140,3 +144,24 @@ def load_module_profile(module_path: str | Path) -> dict:
         str(Path(module_path).with_name(f"{Path(module_path).stem}_rust.rs")),
     )
     return merged
+
+
+def load_module_profile(module_path: str | Path) -> dict:
+    module_path = str(Path(module_path))
+    module_profile_path = _profile_path("modules", "module_path", module_path)
+    module_profile = _load_json(module_profile_path)
+    return _finalize_module_profile(module_profile, module_profile_path, module_path)
+
+
+def load_module_profile_by_id(profile_id: str) -> dict:
+    module_profile_path = _profile_path("modules", "profile_id", profile_id)
+    module_profile = _load_json(module_profile_path)
+    return _finalize_module_profile(module_profile, module_profile_path, module_profile["module_path"])
+
+
+def resolve_module_profile(*, module_path: str | Path | None = None, profile_id: str | None = None) -> dict:
+    if profile_id:
+        return load_module_profile_by_id(profile_id)
+    if module_path is None:
+        raise ValueError("Either `module_path` or `profile_id` must be provided.")
+    return load_module_profile(module_path)

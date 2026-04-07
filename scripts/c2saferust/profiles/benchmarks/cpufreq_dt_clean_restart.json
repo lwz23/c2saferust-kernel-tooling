@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-benchmark-profile",
+  "benchmark_id": "cpufreq-dt-clean-restart",
+  "module_id": "cpufreq-dt",
+  "module_path": "drivers/cpufreq/cpufreq-dt.c",
+  "driver_rust_path": "drivers/cpufreq/rcpufreq_dt.rs",
+  "artifact_dir": "Documentation/rust/c2saferust/cpufreq-dt",
+  "module_title": "cpufreq-dt clean blind-first restart benchmark",
+  "benchmark_track": "phase2-expansion",
+  "sample_tier": "medium",
+  "scope": "core_plus_platdev_seam",
+  "quota_class": "phase2-restart",
+  "target_runtime_state": "behavior_validated",
+  "claim_ceiling": "No blind-first claim until a fresh, uncontaminated worktree is created and the runtime harness is frozen before candidate generation.",
+  "blind_policy": {
+    "freeze_before_compare": true,
+    "incidental_path_exposure_policy": "path-only-no-body-no-diff",
+    "provenance_log_required": true
+  },
+  "search_hygiene": {
+    "forbidden_reference_paths": [
+      "drivers/cpufreq/rcpufreq_dt.rs"
+    ],
+    "search_allowlist": [
+      "drivers/cpufreq",
+      "rust/kernel",
+      "Documentation/rust/c2saferust/cpufreq-dt"
+    ]
+  },
+  "difference_metrics": {
+    "api_markers": [
+      "impl cpufreq::Driver",
+      "opp::Table",
+      "CpumaskVar",
+      "module_platform_driver"
+    ],
+    "callback_markers": [
+      "fn init(",
+      "fn exit(",
+      "fn online(",
+      "fn offline(",
+      "fn target_index("
+    ]
+  },
+  "runtime_plan": {
+    "primary_runner": "qemu-sabrelite-cpufreq",
+    "minimum_state": "behavior_validated",
+    "note": "The current contaminated scouting run must not be reused as blind-first input. Restart from a fresh pre-intro blind worktree."
+  }
+}

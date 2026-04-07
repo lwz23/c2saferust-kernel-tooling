@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-benchmark-profile",
+  "benchmark_id": "ax88796b-ground-truth-strict",
+  "module_profile_id": "ax88796b_blind_strict",
+  "module_title": "ax88796b strict blind-first ground-truth benchmark",
+  "benchmark_track": "formal-ground-truth",
+  "sample_tier": "small",
+  "scope": "full_driver",
+  "quota_class": "phase1-formal",
+  "calibration_status": "historical-answer-leakage",
+  "calibration_notice": "This benchmark profile remains available only for historical calibration because it carries helper-level compare hints in its blind inputs.",
+  "target_runtime_state": "lifecycle_validated",
+  "claim_ceiling": "Lifecycle validation only unless a trusted PHY runtime harness closes the callback behavior surface.",
+  "blind_policy": {
+    "freeze_before_compare": true,
+    "incidental_path_exposure_policy": "path-only-no-body-no-diff",
+    "provenance_log_required": true,
+    "contamination_mode": "strict-rerun-required"
+  },
+  "search_hygiene": {
+    "forbidden_reference_paths": [
+      "drivers/net/phy/ax88796b_rust.rs",
+      "/home/lwz/rfl-dev/archive/legacy-agent-benchmarks/ax88796b-blind-*",
+      "/home/lwz/rfl-dev/archive/legacy-agent-benchmarks/ax88796b-blind-*/Documentation/rust/lwz-dev/c2rust-benchmarks/*",
+      "any git show drivers/net/phy/ax88796b_rust.rs"
+    ],
+    "search_allowlist": [
+      "drivers/net/phy/ax88796b.c",
+      "drivers/net/phy/Kconfig",
+      "drivers/net/phy/Makefile",
+      "include/linux/phy.h",
+      "include/linux/mii.h",
+      "rust/kernel/net.rs",
+      "rust/kernel/net/phy.rs",
+      "rust/kernel/net/phy/reg.rs",
+      "Documentation/rust/c2saferust/ax88796b_blind_strict"
+    ]
+  },
+  "difference_metrics": {
+    "api_markers": [
+      "kernel::module_phy_driver!",
+      "phy::DeviceId::new_with_driver",
+      "impl Driver for",
+      "dev.genphy_suspend()",
+      "dev.genphy_resume()",
+      "dev.genphy_soft_reset()"
+    ],
+    "callback_markers": [
+      "fn read_status(",
+      "fn suspend(",
+      "fn resume(",
+      "fn soft_reset(",
+      "fn link_change_notify("
+    ],
+    "teardown_markers": [
+      "suspend",
+      "resume",
+      "remove",
+      "drop",
+      "unregister"
+    ]
+  },
+  "runtime_plan": {
+    "primary_runner": "kunit-synthetic-mdio",
+    "fallback_runner": "qemu-module-lifecycle",
+    "minimum_state": "lifecycle_validated",
+    "required_callbacks": [
+      "probe",
+      "soft_reset",
+      "read_status",
+      "link_change_notify"
+    ],
+    "note": "The strict blind-first run should prefer `kunit-synthetic-mdio`; until that runner exists in the tool, the formal minimum remains the fallback `qemu-module-lifecycle` oracle with an explicit benchmark-gap annotation."
+  }
+}

@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-family-profile",
+  "family_id": "pci-miscdevice",
+  "template_id": "pci_miscdevice_rules",
+  "helper_wrapper_candidates": {},
+  "direct_ffi_candidates": {},
+  "default_binding_header_decision": {
+    "action": "handled_by_rust_abstraction",
+    "reason": "This family should default to existing Rust PCI/miscdevice/uaccess/page/mm surfaces instead of exposing legacy C headers through bindgen.",
+    "required_symbols": [],
+    "mvp_blocking": false
+  },
+  "default_external_header_decision": {
+    "action": "manual_review",
+    "reason": "External/private source headers need an explicit landing, omission, or Rust-side replacement decision before driver codegen.",
+    "required_symbols": [],
+    "mvp_blocking": true
+  },
+  "bindings_header_decisions": {
+    "linux/pci.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "The Rust driver should use `kernel::pci` instead of bindgen-visible PCI structures and callbacks.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/miscdevice.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "The Rust driver should use `kernel::miscdevice` rather than registering `struct miscdevice` directly.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/fs.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "File operations should stay behind `kernel::miscdevice` abstractions.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/uaccess.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "User copy logic should route through `kernel::uaccess` instead of raw copy helpers.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/mm.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "PFN/VMA mapping should route through `kernel::mm::virt::VmaNew` instead of exposing raw `linux/mm.h` helpers to the driver surface.",
+      "required_symbols": [
+        "vm_iomap_memory",
+        "VM_IO",
+        "VM_DONTEXPAND",
+        "VM_DONTCOPY"
+      ],
+      "mvp_blocking": false
+    },
+    "linux/io.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "BAR/shared-memory mapping should route through a dedicated PCI abstraction instead of exposing raw driver-visible mappings.",
+      "required_symbols": [
+        "ioremap",
+        "memremap"
+      ],
+      "mvp_blocking": false
+    }
+  },
+  "implemented_rust_modules": {
+    "mvp": {
+      "pci": "rust/kernel/pci.rs",
+      "miscdevice": "rust/kernel/miscdevice.rs",
+      "uaccess": "rust/kernel/uaccess.rs",
+      "page": "rust/kernel/page.rs",
+      "vma_pfn_map": "rust/kernel/mm/virt.rs",
+      "shared_bar_map": "rust/kernel/pci/io.rs"
+    },
+    "post_mvp": {}
+  },
+  "abstraction_requirements": {
+    "pci": {
+      "patterns": [
+        "struct pci_driver",
+        "pci_enable_device",
+        "pci_request_region"
+      ],
+      "reason": "The driver depends on PCI probe/remove wiring and resource ownership.",
+      "required_surface": [
+        "A typed `pci::Driver` trait that owns probe/remove registration.",
+        "A safe PCI device surface for enabling the device and tying driver state lifetime to the bound device."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/pci.rs"
+      ]
+    },
+    "miscdevice": {
+      "patterns": [
+        "struct miscdevice",
+        "struct file_operations",
+        "misc_register",
+        "misc_deregister"
+      ],
+      "reason": "The driver exposes a miscdevice user API and needs safe file operation registration.",
+      "required_surface": [
+        "An owned miscdevice registration that deregisters on drop.",
+        "A typed open/release/ioctl/mmap callback surface that does not require raw `file_operations` in driver code."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/miscdevice.rs"
+      ]
+    },
+    "uaccess": {
+      "patterns": [
+        "copy_to_user",
+        "copy_from_user"
+      ],
+      "reason": "The driver exchanges ioctl payloads with userspace and needs a typed user-copy surface.",
+      "required_surface": [
+        "Typed user pointer/slice access for request decoding and reply writes."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/uaccess.rs"
+      ]
+    },
+    "page": {
+      "patterns": [
+        "__get_free_page",
+        "virt_to_phys",
+        "free_page"
+      ],
+      "reason": "Some miscdevice-backed drivers keep page-backed request or ping buffers whose allocation, physical address exposure, and teardown must stay owned by Rust state.",
+      "required_surface": [
+        "An owned page allocation surface that frees on drop.",
+        "A safe way to export the page physical address and do bounded page-local IO for request buffers."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/page.rs"
+      ]
+    },
+    "vma_pfn_map": {
+      "patterns": [
+        "remap_pfn_range",
+        "VM_IO",
+        "VM_DONTEXPAND",
+        "VM_DONTCOPY"
+      ],
+      "reason": "The driver exports device memory through `mmap`, which needs explicit VMA/PFN mapping proof obligations.",
+      "required_surface": [
+        "A dedicated Rust wrapper for PFN remapping into `VmaNew` that encodes the required VMA flag preconditions."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/mm/virt.rs",
+        "rust/kernel/miscdevice.rs"
+      ]
+    },
+    "shared_bar_map": {
+      "patterns": [
+        "ioremap",
+        "memremap",
+        "pci_resource_start",
+        "pci_resource_len"
+      ],
+      "reason": "The driver keeps mapped BAR/shared-memory ranges whose lifetime must stay bound to the PCI device and module teardown.",
+      "required_surface": [
+        "A safe owner for BAR/shared memory mappings so driver code never stores raw mapped pointers."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/pci.rs",
+        "rust/kernel/pci/io.rs"
+      ]
+    }
+  },
+  "translation": {
+    "deferred_callback_default": {
+      "status": "deferred",
+      "rust_surface": null,
+      "body_plan": [
+        "Keep this callback outside the first Rust loop until the corresponding abstraction exists and the artifacts explicitly allow it."
+      ]
+    }
+  },
+  "oracle": {
+    "runner": "qemu-module-lifecycle"
+  }
+}

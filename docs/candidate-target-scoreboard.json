@@ -1,0 +1,109 @@
+{
+  "artifact_type": "candidate-target-scoreboard",
+  "candidates": [
+    {
+      "candidate_id": "qemu_pci_sample_track",
+      "expected_maintainer_context": "PCI/sample/testing rather than a strong new-driver submission path.",
+      "key_blockers": [
+        "Upstream narrative is weak compared with a real missing driver.",
+        "Better as a tool-hardening sample than a maintainer-facing flagship target."
+      ],
+      "oracle_strategy": "Standard QEMU device + local VM oracle; ideal for runner/family hardening, weaker for the first external-source upstream pitch.",
+      "scores": {
+        "abstraction_reuse": 5,
+        "community_match": 2,
+        "maintainer_fit": 4,
+        "source_availability": 4,
+        "test_feasibility": 5
+      },
+      "source_urls": [
+        "https://www.qemu.org/docs/master/specs/edu.html",
+        "https://gitlab.com/qemu-project/qemu/-/blob/master/hw/misc/edu.c"
+      ],
+      "subsystem": "pci/standard-qemu",
+      "summary": "Excellent local oracle target for hardening the tool and runner stack, but weak as an upstream story because it does not map cleanly to a missing real-world driver request.",
+      "total_score": 47
+    },
+    {
+      "candidate_id": "goldfish_address_space",
+      "expected_maintainer_context": "Android virtualization / platform / miscdevice, not netdev.",
+      "key_blockers": [
+        "Requires Android emulator + adb environment before any runtime-equivalence claim.",
+        "Guest kernel alignment for true Rust-vs-C differential testing remains the highest-risk step."
+      ],
+      "oracle_strategy": "Android emulator guest with adb-driven ABI tester, then differential oracle if guest/kernel alignment becomes tractable.",
+      "scores": {
+        "abstraction_reuse": 4,
+        "community_match": 4,
+        "maintainer_fit": 4,
+        "source_availability": 5,
+        "test_feasibility": 2
+      },
+      "source_urls": [
+        "https://android.googlesource.com/kernel/goldfish-modules/+/refs/heads/android-5.4/goldfish_drivers/goldfish_address_space.c",
+        "https://android.googlesource.com/kernel/goldfish-modules/+/refs/heads/android-5.4/uapi/goldfish_address_space.h"
+      ],
+      "subsystem": "platform/pci/miscdevice",
+      "summary": "Android emulator side PCI + miscdevice driver with public out-of-tree C source and a strong fit for the current Rust PCI/miscdevice abstraction track.",
+      "total_score": 44
+    },
+    {
+      "candidate_id": "goldfish_sync",
+      "expected_maintainer_context": "Android virtualization / sync / miscdevice.",
+      "key_blockers": [
+        "Needs dma_fence, sync_file, IRQ, and workqueue abstractions.",
+        "Too much abstraction growth for the first non-net target."
+      ],
+      "oracle_strategy": "Would also require Android emulator runtime plus a much larger in-kernel abstraction expansion.",
+      "scores": {
+        "abstraction_reuse": 2,
+        "community_match": 3,
+        "maintainer_fit": 4,
+        "source_availability": 5,
+        "test_feasibility": 1
+      },
+      "source_urls": [
+        "https://android.googlesource.com/kernel/goldfish-modules/+/refs/heads/android-5.4/goldfish_drivers/goldfish_sync.c"
+      ],
+      "subsystem": "platform/miscdevice/sync",
+      "summary": "Real Android emulator driver with public source, but it crosses dma_fence/sync_file/IRQ/workqueue surfaces that are substantially larger than the current abstraction set.",
+      "total_score": 34
+    },
+    {
+      "candidate_id": "jlsemi_jl2xxx",
+      "expected_maintainer_context": "netdev/PHY, likely routed back to the same maintainer guidance that asked for real new hardware bring-up.",
+      "key_blockers": [
+        "No local hardware available.",
+        "Would naturally re-enter the netdev review path we explicitly wanted to avoid for the next iteration."
+      ],
+      "oracle_strategy": "Requires real hardware or a convincing in-kernel differential harness because local VM-only testing is weak.",
+      "scores": {
+        "abstraction_reuse": 3,
+        "community_match": 3,
+        "maintainer_fit": 1,
+        "source_availability": 4,
+        "test_feasibility": 1
+      },
+      "source_urls": [
+        "https://github.com/unifreq/linux-5.15.y/blob/main/drivers/net/phy/jlsemi.c"
+      ],
+      "subsystem": "net/phy",
+      "summary": "Real missing PHY driver with public source, but it falls back into Andrew/netdev review context and still depends on hardware-backed validation we do not currently have.",
+      "total_score": 28
+    }
+  ],
+  "current_primary": "goldfish_address_space",
+  "recommendation": {
+    "action": "keep-primary",
+    "candidate_id": "goldfish_address_space",
+    "reason": "No candidate beats goldfish_address_space on both community_match and test_feasibility while also clearing the switch threshold."
+  },
+  "schema_version": 1,
+  "weights": {
+    "abstraction_reuse": 2,
+    "community_match": 3,
+    "maintainer_fit": 2,
+    "source_availability": 2,
+    "test_feasibility": 3
+  }
+}

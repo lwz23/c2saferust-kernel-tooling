@@ -241,23 +241,75 @@ fn token_is_present(line: &str, token: &str) -> bool {
     }
 }
 
+fn find_keyword(line: &str, needle: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    let mut index = 0;
+
+    while let Some(pos) = line[index..].find(needle) {
+        let start = index + pos;
+        let end = start + needle_bytes.len();
+        let left_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric() && bytes[start - 1] != b'_';
+        let right_ok =
+            end == bytes.len() || (!bytes[end].is_ascii_alphanumeric() && bytes[end] != b'_');
+        if left_ok && right_ok {
+            return Some(start);
+        }
+        index = end;
+    }
+
+    None
+}
+
+fn classify_unsafe_line(line: &str) -> Option<&'static str> {
+    let unsafe_pos = find_keyword(line, "unsafe")?;
+    let rest = &line[unsafe_pos + "unsafe".len()..];
+    let bytes = rest.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+
+    if index < bytes.len() && bytes[index] == b'{' {
+        return Some("unsafe-block");
+    }
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'{' || byte == b';' {
+            break;
+        }
+
+        if byte.is_ascii_alphanumeric() || byte == b'_' {
+            let start = index;
+            index += 1;
+            while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_') {
+                index += 1;
+            }
+
+            match &rest[start..index] {
+                "impl" => return Some("unsafe-impl"),
+                "trait" => return Some("unsafe-trait"),
+                "fn" => return Some("unsafe-fn"),
+                _ => {}
+            }
+            continue;
+        }
+
+        index += 1;
+    }
+
+    Some("unsafe-token")
+}
+
 fn collect_unsafe_sites(file: &str, stripped: &str) -> Vec<(String, usize, String)> {
     let mut sites = Vec::new();
     for (line_index, line) in stripped.lines().enumerate() {
         if !line.contains("unsafe") {
             continue;
         }
-        let kind = if line.contains("unsafe impl") {
-            "unsafe-impl"
-        } else if line.contains("unsafe fn") {
-            "unsafe-fn"
-        } else if line.contains("unsafe trait") {
-            "unsafe-trait"
-        } else if line.contains("unsafe {") {
-            "unsafe-block"
-        } else {
-            "unsafe-token"
-        };
+        let kind = classify_unsafe_line(line).unwrap_or("unsafe-token");
         sites.push((file.to_string(), line_index + 1, kind.to_string()));
     }
     sites

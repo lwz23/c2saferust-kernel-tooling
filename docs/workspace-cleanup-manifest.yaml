@@ -1,0 +1,223 @@
+schema_version: 1
+updated: 2026-04-07
+root: /home/lwz/rfl-dev
+canonical_tool_repo: /home/lwz/rfl-dev/c2saferust-kernel-tooling
+
+paths:
+  - path: /home/lwz/rfl-dev/c2saferust-kernel-tooling
+    kind: tool-repo
+    action: keep-active
+
+  - path: /home/lwz/rfl-dev/worktrees/standalone-nlmon-replay-v1
+    kind: worktree
+    category: active-validation
+    action: keep-active
+
+  - path: /home/lwz/rfl-dev/worktrees/standalone-et1011c-replay-v1
+    kind: worktree
+    category: active-validation
+    action: keep-active
+
+  - path: /home/lwz/rfl-dev/worktrees/goldfish-address-space-upstream-v1
+    kind: worktree
+    category: active-validation
+    action: keep-active
+
+  - path: /home/lwz/rfl-dev/worktrees/goldfish-address-space-c-baseline-v1
+    kind: worktree
+    category: active-validation
+    action: keep-active
+
+  - path: /home/lwz/rfl-dev/worktrees/nlmon-tooling-clean-v1
+    kind: worktree
+    category: tool-flow-archive
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/tool-flow-history/nlmon-tooling-clean-v1
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/phy-reference-clean-v1
+    kind: worktree
+    category: tool-flow-archive
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/tool-flow-history/phy-reference-clean-v1
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/phy-reference-clean-v2-qsemi
+    kind: worktree
+    category: tool-flow-archive
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/tool-flow-history/phy-reference-clean-v2-qsemi
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/nlmon-blind-rust
+    kind: worktree
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/nlmon-blind-rust
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/ax88796b-blind-rust
+    kind: worktree
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/ax88796b-blind-rust
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/ax88796b-blind-validation
+    kind: worktree
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/ax88796b-blind-validation
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/rnull-blind-rust
+    kind: worktree
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/rnull-blind-rust
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/rnull-fresh-validation
+    kind: worktree
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/rnull-fresh-validation
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/cpufreq-dt-blind-rerun
+    kind: worktree
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/cpufreq-dt-blind-rerun
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/cpufreq-dt-fresh-validation
+    kind: worktree
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/cpufreq-dt-fresh-validation
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/drm-panic-qr-blind-rust
+    kind: worktree
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/drm-panic-qr-blind-rust
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/cpufreq-dt-blind-rust
+    kind: repo-dir
+    category: legacy-agent-benchmark
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/legacy-agent-benchmarks/cpufreq-dt-blind-rust
+    move_method: plain-move
+    note: not registered in /home/lwz/rfl-dev/linux worktree list
+
+  - path: /home/lwz/rfl-dev/worktrees/goldfish-address-space-rfc-v1
+    kind: worktree
+    category: rfc-history
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/rfc-history/goldfish-address-space-rfc-v1
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/phy-reference-upstream-clean-v1
+    kind: worktree
+    category: rfc-history
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/rfc-history/phy-reference-upstream-clean-v1
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/phy-reference-upstream-clean-v2-qsemi
+    kind: worktree
+    category: rfc-history
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/rfc-history/phy-reference-upstream-clean-v2-qsemi
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/worktrees/phy-reference-upstream-clean-split-v1
+    kind: worktree
+    category: rfc-history
+    action: archive
+    destination: /home/lwz/rfl-dev/archive/rfc-history/phy-reference-upstream-clean-split-v1
+    move_method: git-worktree-move
+
+  - path: /home/lwz/rfl-dev/build
+    kind: build-output
+    category: active-build-root
+    action: keep-active
+
+  - path: /home/lwz/rfl-dev/build-ax88796b-blind
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-ax88796b-blind-validation
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-cpufreq-dt-blind
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-cpufreq-dt-blind-rerun
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-cpufreq-dt-fresh-validation
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-drm-panic-qr-blind
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-goldfish-rfc-v1-check
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-blind-c
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-blind-c-min
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-blind-c-serial
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-blind-rust
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-blind-rust-min
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-blind-rust-serial
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-kasan
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-kmem
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-nlmon-lockdep
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-rnull-blind
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-rnull-fresh-validation
+    kind: build-output
+    action: delete
+
+  - path: /home/lwz/rfl-dev/build-rnull-v6.10
+    kind: build-output
+    action: delete

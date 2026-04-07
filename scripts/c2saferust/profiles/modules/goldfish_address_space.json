@@ -1,0 +1,350 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-module-profile",
+  "profile_id": "goldfish_address_space",
+  "family_id": "pci-miscdevice",
+  "module_path": "goldfish_drivers/goldfish_address_space.c",
+  "module_id": "goldfish_address_space",
+  "artifact_dir": "Documentation/rust/c2saferust/goldfish_address_space",
+  "driver_rust_path": "drivers/platform/goldfish/goldfish_address_space.rs",
+  "source": {
+    "tree": "external-tree",
+    "module_path": "goldfish_drivers/goldfish_address_space.c"
+  },
+  "landing": {
+    "module_dir": "drivers/platform/goldfish",
+    "driver_rust_path": "drivers/platform/goldfish/goldfish_address_space.rs",
+    "kconfig_path": "drivers/platform/goldfish/Kconfig",
+    "makefile_path": "drivers/platform/goldfish/Makefile"
+  },
+  "kbuild": {
+    "mode": "add-new-driver",
+    "driver_config_symbol": "GOLDFISH_ADDRESS_SPACE",
+    "driver_object": "goldfish_address_space.o",
+    "driver_prompt": "Goldfish address space support in Rust",
+    "driver_depends_on": "GOLDFISH && PCI && RUST",
+    "driver_help": [
+      "Build the Rust goldfish address space driver."
+    ],
+    "kconfig_insert_after_symbol": "GOLDFISH_PIPE",
+    "makefile_insert_after": "obj-$(CONFIG_GOLDFISH_PIPE)\t+= goldfish_pipe.o"
+  },
+  "external_header_decisions": {
+    "defconfig_test.h": {
+      "action": "ignore_private_header",
+      "reason": "This is Android-side build/test scaffolding and does not belong in the upstream landing plan.",
+      "required_symbols": [],
+      "mvp_blocking": false,
+      "rust_strategy": "Omit from the upstream Rust driver and rely on in-tree configuration/build plumbing instead."
+    },
+    "goldfish/goldfish_address_space.h": {
+      "action": "land_uapi_header",
+      "reason": "This header carries the userspace-visible ioctl and shared layout contract, so the upstream plan needs an explicit UAPI landing decision instead of treating it as an opaque private include.",
+      "required_symbols": [
+        "GOLDFISH_ADDRESS_SPACE_DEVICE_NAME",
+        "GOLDFISH_ADDRESS_SPACE_IOCTL_*",
+        "struct goldfish_address_space_ping",
+        "struct goldfish_address_space_ping_with_data"
+      ],
+      "mvp_blocking": true,
+      "landing_kind": "uapi-header",
+      "landing_path": "include/uapi/linux/goldfish_address_space.h",
+      "rust_strategy": "Land a typed UAPI/header surface first; route the Rust driver through translated constants and request layouts instead of direct bindgen-visible private headers.",
+      "reference_urls": [
+        "https://android.googlesource.com/kernel/goldfish-modules/%2B/refs/heads/android-5.4%5E/uapi/goldfish_address_space.h"
+      ]
+    }
+  },
+  "translation": {
+    "goal": "Drive `drivers/platform/goldfish/goldfish_address_space.rs` to an artifact-constrained PCI + miscdevice implementation that closes `open/release/ioctl/mmap` and carries the driver through runtime differential against the C baseline while keeping equivalence claims limited to the currently covered ABI subset.",
+    "abstraction_goal": "Stage the external-source `goldfish_address_space` target through explicit Rust abstractions for PCI, miscdevice, page-backed ping state, shared BAR ownership, user copy, and VMA mapping so the driver can close `open/release/ioctl/mmap` without driver-side unsafe.",
+    "mvp_scope": {
+      "target_command": "make ... drivers/platform/goldfish/goldfish_address_space.o && make ... M=drivers/platform/goldfish modules",
+      "note": "This round now claims PCI probe/remove plus miscdevice userspace API closure together with expanded minimal-guest differential over the current ABI subset. Broader host protocol coverage remains a later oracle."
+    },
+    "required_callback_fields": [
+      {
+        "source": "pci_driver",
+        "field": "probe"
+      },
+      {
+        "source": "pci_driver",
+        "field": "remove"
+      },
+      {
+        "source": "file_operations",
+        "field": "open"
+      },
+      {
+        "source": "file_operations",
+        "field": "release"
+      },
+      {
+        "source": "file_operations",
+        "field": "unlocked_ioctl"
+      },
+      {
+        "source": "file_operations",
+        "field": "compat_ioctl"
+      },
+      {
+        "source": "file_operations",
+        "field": "mmap"
+      }
+    ],
+    "deferred_callback_fields": [],
+    "callback_roles": {
+      "pci_driver.probe": {
+        "status": "required",
+        "rust_surface": "impl pci::Driver for GoldfishAddressSpaceDriver::probe",
+        "body_plan": [
+          "Use the existing PCI abstraction to bind the device and create the per-device Rust owner.",
+          "Register the miscdevice from probe and keep the registration inside the driver-owned Rust state."
+        ]
+      },
+      "pci_driver.remove": {
+        "status": "required",
+        "rust_surface": "impl pci::Driver for GoldfishAddressSpaceDriver::unbind",
+        "body_plan": [
+          "Let owned Rust state drop in a way that unregisters the miscdevice and tears down probe state without raw remove code in the driver."
+        ]
+      },
+      "file_operations.open": {
+        "status": "required",
+        "rust_surface": "impl miscdevice::MiscDevice for GoldfishAddressSpaceMisc::open",
+        "body_plan": [
+          "Use typed miscdevice registration data to hand per-device runtime into `open` without raw `container_of` logic in driver code.",
+          "Allocate a page-backed ping buffer and create typed per-file state that owns the host handle and mapping bookkeeping."
+        ]
+      },
+      "file_operations.release": {
+        "status": "required",
+        "rust_surface": "impl miscdevice::MiscDevice for GoldfishAddressSpaceMisc::release",
+        "body_plan": [
+          "Keep release coupled to the miscdevice abstraction and drive teardown from owned Rust state rather than raw file-private casts.",
+          "Destroy the host handle and reclaim guest-owned blocks from typed per-file state."
+        ]
+      },
+      "file_operations.unlocked_ioctl": {
+        "status": "required",
+        "rust_surface": "impl miscdevice::MiscDevice for GoldfishAddressSpaceMisc::ioctl",
+        "body_plan": [
+          "Decode user requests through `UserSlice` plus explicit byte-encoded ioctl wrappers so driver code stays zero-unsafe and zero-bindings.",
+          "Route allocate/deallocate/ping/claim flows through typed Rust state and abstraction-owned user copy helpers."
+        ]
+      },
+      "file_operations.compat_ioctl": {
+        "status": "required",
+        "rust_surface": "impl miscdevice::MiscDevice for GoldfishAddressSpaceMisc::compat_ioctl",
+        "body_plan": [
+          "Reuse the typed ioctl path for compat handling because the current UAPI payloads stay width-stable across compat mode."
+        ]
+      },
+      "file_operations.mmap": {
+        "status": "required",
+        "rust_surface": "impl miscdevice::MiscDevice for GoldfishAddressSpaceMisc::mmap",
+        "body_plan": [
+          "Authorize `mmap` through the explicit `SharedMemoryBar` owner plus `VmaNew::iomap_memory` wrapper rather than raw `remap_pfn_range` in driver code.",
+          "Gate the mapping by checking requested ranges against typed owned/shared block tracking before exposing the BAR to userspace."
+        ]
+      }
+    },
+    "setup_translation_map": {},
+    "validate_translation_rules": [],
+    "module_shell": {
+      "module_macro_required": true,
+      "preferred_driver_type": "GoldfishAddressSpaceDriver",
+      "preferred_module_macro": "kernel::module_pci_driver!",
+      "device_table": [
+        "Translate the goldfish PCI device id table through `kernel::pci_device_table!` before code generation."
+      ],
+      "drivers": [
+        "GoldfishAddressSpaceDriver"
+      ],
+      "module_name": "goldfish_address_space"
+    },
+    "private_state": {
+      "type_name": "GoldfishAddressSpaceDriver",
+      "layout": "PCI-bound Rust owner created from probe",
+      "fields": [
+        {
+          "name": "misc",
+          "rust_type": "miscdevice::MiscDeviceRegistration<GoldfishAddressSpaceMisc>",
+          "role": "Own the miscdevice registration so remove/drop can tear it down soundly."
+        }
+      ],
+      "note": "Per-device runtime now owns the control/shared BAR abstractions, while per-file `Arc<FileState>` owns the ping page, host handle, and mapping bookkeeping."
+    }
+  },
+  "command_semantics": {
+    "commands": [
+      {
+        "id": "allocate-block",
+        "helper": "allocate_block",
+        "command": "AllocateBlock",
+        "completion_mode": "status-gated",
+        "success_witness": "The command completes only if the status register reports success, after which the block offset and size may be read back.",
+        "failure_witness": "A non-zero status register value is translated into the returned error.",
+        "c_evidence": {
+          "function": "as_ioctl_allocate_block_locked_impl",
+          "note": "The external C driver calls `as_run_command(..., AS_COMMAND_ALLOCATE_BLOCK)` and then reads back offset/size."
+        },
+        "verification": {
+          "must_contain": [
+            "Self::run_command_locked(&control, CommandId::AllocateBlock)?"
+          ]
+        }
+      },
+      {
+        "id": "deallocate-block",
+        "helper": "deallocate_block",
+        "command": "DeallocateBlock",
+        "completion_mode": "status-gated",
+        "success_witness": "The command completes only if the status register reports success.",
+        "failure_witness": "A non-zero status register value is translated into the returned error.",
+        "c_evidence": {
+          "function": "as_ioctl_unallocate_block_locked_impl",
+          "note": "The external C driver returns `as_run_command(..., AS_COMMAND_DEALLOCATE_BLOCK)` directly."
+        },
+        "verification": {
+          "must_contain": [
+            "Self::run_command_locked(&control, CommandId::DeallocateBlock)"
+          ]
+        }
+      },
+      {
+        "id": "generate-handle",
+        "helper": "generate_handle",
+        "command": "GenHandle",
+        "completion_mode": "readback-gated",
+        "success_witness": "Completion is validated by reading back a non-invalid handle from the HANDLE register.",
+        "failure_witness": "If the readback handle is `GOLDFISH_AS_INVALID_HANDLE`, the helper returns `EINVAL`.",
+        "c_evidence": {
+          "function": "as_open",
+          "note": "The external C driver issues `AS_COMMAND_GEN_HANDLE` and validates the HANDLE readback instead of gating on STATUS."
+        },
+        "verification": {
+          "must_contain": [
+            "Self::issue_command_locked(&control, CommandId::GenHandle)",
+            "control.read32(Registers::HANDLE)",
+            "GOLDFISH_AS_INVALID_HANDLE"
+          ],
+          "must_not_contain": [
+            "Self::run_command_locked(&control, CommandId::GenHandle)"
+          ]
+        }
+      },
+      {
+        "id": "tell-ping-info-addr",
+        "helper": "tell_ping_info_addr",
+        "command": "TellPingInfoAddr",
+        "completion_mode": "readback-gated",
+        "success_witness": "Completion is validated by reading back the echoed ping-info physical address from the device registers.",
+        "failure_witness": "If the echoed physical address differs from the programmed address, the helper returns `EINVAL`.",
+        "c_evidence": {
+          "function": "as_open",
+          "note": "The external C driver issues `AS_COMMAND_TELL_PING_INFO_ADDR` and validates the echoed physical address readback."
+        },
+        "verification": {
+          "must_contain": [
+            "Self::issue_command_locked(&control, CommandId::TellPingInfoAddr)",
+            "Self::read_u64(",
+            "returned != ping_info_phys"
+          ],
+          "must_not_contain": [
+            "Self::run_command_locked(&control, CommandId::TellPingInfoAddr)"
+          ]
+        }
+      },
+      {
+        "id": "destroy-handle",
+        "helper": "destroy_handle",
+        "command": "DestroyHandle",
+        "completion_mode": "issue-only",
+        "success_witness": "The command is issued after programming the handle register; teardown stays best-effort on the release path.",
+        "failure_witness": "No new STATUS/readback gate may be introduced on the release path.",
+        "release_best_effort": true,
+        "c_evidence": {
+          "function": "as_release",
+          "note": "The external C driver issues `AS_COMMAND_DESTROY_HANDLE` on release and does not gate teardown on STATUS or readback."
+        },
+        "verification": {
+          "must_contain": [
+            "Self::issue_command_locked(&control, CommandId::DestroyHandle)"
+          ],
+          "must_not_contain": [
+            "Self::run_command_locked(&control, CommandId::DestroyHandle)"
+          ]
+        }
+      }
+    ]
+  },
+  "oracle": {
+    "runner_id": "android-goldfish-oracle",
+    "scenario_id": "goldfish_minimal_guest_runtime",
+    "scenario_inputs": {
+      "module_name": "goldfish_address_space",
+      "device_node": "/dev/goldfish_address_space",
+      "operations": [
+        "open",
+        "release",
+        "allocate_block",
+        "deallocate_block",
+        "ping",
+        "mmap",
+        "claim_shared",
+        "unclaim_shared",
+        "unknown_ioctl",
+        "reopen"
+      ]
+    },
+    "differential": {
+      "baseline_mode": "c-baseline-tree",
+      "comparison_mode": "summary-field-equality",
+      "candidate_runner_context": {
+        "managed_guest": {
+          "enabled": true,
+          "boot_mode": "minimal-linux",
+          "label": "candidate",
+          "kernel_source": "build-tree",
+          "serial_port_base": 5560,
+          "log_filename": "minimal-guest-candidate.log",
+          "minimal_guest_ramdisk_filename": "minimal-guest-candidate-ramdisk.cpio",
+          "synthetic_sysdir_name": "minimal-guest-candidate-sysdir",
+          "synthetic_system_filename": "minimal-guest-candidate-system.img",
+          "synthetic_vendor_filename": "minimal-guest-candidate-vendor.img",
+          "synthetic_userdata_filename": "minimal-guest-candidate-userdata.img",
+          "kernel_cmdline": "console=ttyS0 rdinit=/init nokaslr panic=-1"
+        }
+      },
+      "baseline_runner_context": {
+        "managed_guest": {
+          "enabled": true,
+          "boot_mode": "minimal-linux",
+          "label": "baseline",
+          "kernel_source": "build-tree",
+          "serial_port_base": 5562,
+          "log_filename": "minimal-guest-baseline.log",
+          "minimal_guest_ramdisk_filename": "minimal-guest-baseline-ramdisk.cpio",
+          "synthetic_sysdir_name": "minimal-guest-baseline-sysdir",
+          "synthetic_system_filename": "minimal-guest-baseline-system.img",
+          "synthetic_vendor_filename": "minimal-guest-baseline-vendor.img",
+          "synthetic_userdata_filename": "minimal-guest-baseline-userdata.img",
+          "kernel_cmdline": "console=ttyS0 rdinit=/init nokaslr panic=-1"
+        }
+      },
+      "required_operations": [
+        "open",
+        "release",
+        "allocate_block",
+        "deallocate_block",
+        "ping",
+        "mmap",
+        "claim_shared",
+        "unclaim_shared",
+        "unknown_ioctl",
+        "reopen"
+      ]
+    }
+  }
+}

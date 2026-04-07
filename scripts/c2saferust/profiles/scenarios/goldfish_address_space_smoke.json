@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-scenario-profile",
+  "scenario_id": "goldfish_address_space_smoke",
+  "runner_id": "android-goldfish-oracle",
+  "log_prefix": "goldfish-oracle",
+  "summary_fields": [
+    "open_rc",
+    "release_rc",
+    "allocate_block_rc",
+    "deallocate_block_rc",
+    "claim_shared_rc",
+    "unclaim_shared_rc",
+    "ping_rc",
+    "mmap_rc"
+  ],
+  "result_success_marker": "[goldfish-oracle] RESULT=PASS",
+  "runtime_contract": {
+    "environment": "android-emulator",
+    "required_tools": [
+      "emulator",
+      "adb"
+    ],
+    "note": "The first functional oracle for `goldfish_address_space` must run in an Android/goldfish environment; generic system QEMU is not a valid substitute."
+  }
+}

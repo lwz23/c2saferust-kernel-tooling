@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "current_primary": "goldfish_address_space",
+  "weights": {
+    "community_match": 3,
+    "test_feasibility": 3,
+    "source_availability": 2,
+    "abstraction_reuse": 2,
+    "maintainer_fit": 2
+  },
+  "candidates": [
+    {
+      "candidate_id": "goldfish_address_space",
+      "subsystem": "platform/pci/miscdevice",
+      "summary": "Android emulator side PCI + miscdevice driver with public out-of-tree C source and a strong fit for the current Rust PCI/miscdevice abstraction track.",
+      "scores": {
+        "community_match": 4,
+        "test_feasibility": 2,
+        "source_availability": 5,
+        "abstraction_reuse": 4,
+        "maintainer_fit": 4
+      },
+      "expected_maintainer_context": "Android virtualization / platform / miscdevice, not netdev.",
+      "oracle_strategy": "Android emulator guest with adb-driven ABI tester, then differential oracle if guest/kernel alignment becomes tractable.",
+      "key_blockers": [
+        "Requires Android emulator + adb environment before any runtime-equivalence claim.",
+        "Guest kernel alignment for true Rust-vs-C differential testing remains the highest-risk step."
+      ],
+      "source_urls": [
+        "https://android.googlesource.com/kernel/goldfish-modules/+/refs/heads/android-5.4/goldfish_drivers/goldfish_address_space.c",
+        "https://android.googlesource.com/kernel/goldfish-modules/+/refs/heads/android-5.4/uapi/goldfish_address_space.h"
+      ]
+    },
+    {
+      "candidate_id": "goldfish_sync",
+      "subsystem": "platform/miscdevice/sync",
+      "summary": "Real Android emulator driver with public source, but it crosses dma_fence/sync_file/IRQ/workqueue surfaces that are substantially larger than the current abstraction set.",
+      "scores": {
+        "community_match": 3,
+        "test_feasibility": 1,
+        "source_availability": 5,
+        "abstraction_reuse": 2,
+        "maintainer_fit": 4
+      },
+      "expected_maintainer_context": "Android virtualization / sync / miscdevice.",
+      "oracle_strategy": "Would also require Android emulator runtime plus a much larger in-kernel abstraction expansion.",
+      "key_blockers": [
+        "Needs dma_fence, sync_file, IRQ, and workqueue abstractions.",
+        "Too much abstraction growth for the first non-net target."
+      ],
+      "source_urls": [
+        "https://android.googlesource.com/kernel/goldfish-modules/+/refs/heads/android-5.4/goldfish_drivers/goldfish_sync.c"
+      ]
+    },
+    {
+      "candidate_id": "jlsemi_jl2xxx",
+      "subsystem": "net/phy",
+      "summary": "Real missing PHY driver with public source, but it falls back into Andrew/netdev review context and still depends on hardware-backed validation we do not currently have.",
+      "scores": {
+        "community_match": 3,
+        "test_feasibility": 1,
+        "source_availability": 4,
+        "abstraction_reuse": 3,
+        "maintainer_fit": 1
+      },
+      "expected_maintainer_context": "netdev/PHY, likely routed back to the same maintainer guidance that asked for real new hardware bring-up.",
+      "oracle_strategy": "Requires real hardware or a convincing in-kernel differential harness because local VM-only testing is weak.",
+      "key_blockers": [
+        "No local hardware available.",
+        "Would naturally re-enter the netdev review path we explicitly wanted to avoid for the next iteration."
+      ],
+      "source_urls": [
+        "https://github.com/unifreq/linux-5.15.y/blob/main/drivers/net/phy/jlsemi.c"
+      ]
+    },
+    {
+      "candidate_id": "qemu_pci_sample_track",
+      "subsystem": "pci/standard-qemu",
+      "summary": "Excellent local oracle target for hardening the tool and runner stack, but weak as an upstream story because it does not map cleanly to a missing real-world driver request.",
+      "scores": {
+        "community_match": 2,
+        "test_feasibility": 5,
+        "source_availability": 4,
+        "abstraction_reuse": 5,
+        "maintainer_fit": 4
+      },
+      "expected_maintainer_context": "PCI/sample/testing rather than a strong new-driver submission path.",
+      "oracle_strategy": "Standard QEMU device + local VM oracle; ideal for runner/family hardening, weaker for the first external-source upstream pitch.",
+      "key_blockers": [
+        "Upstream narrative is weak compared with a real missing driver.",
+        "Better as a tool-hardening sample than a maintainer-facing flagship target."
+      ],
+      "source_urls": [
+        "https://www.qemu.org/docs/master/specs/edu.html",
+        "https://gitlab.com/qemu-project/qemu/-/blob/master/hw/misc/edu.c"
+      ]
+    }
+  ]
+}

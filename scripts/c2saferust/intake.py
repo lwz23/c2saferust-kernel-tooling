@@ -23,14 +23,25 @@ def _repo_root(repo_root: str | Path | None) -> Path:
     return Path(repo_root).resolve() if repo_root else REPO_ROOT
 
 
-def _path_from_repo(repo_root: Path, path_like: str | Path) -> Path:
+def _path_from_root(root: Path, path_like: str | Path) -> Path:
     path = Path(path_like)
-    return path if path.is_absolute() else (repo_root / path)
+    return path if path.is_absolute() else (root / path)
 
 
-def _module_profile(repo_root: Path, module_path: str | Path) -> dict:
-    module = _path_from_repo(repo_root, module_path)
-    return profiles.load_module_profile(_rel(repo_root, module))
+def _path_from_repo(repo_root: Path, path_like: str | Path) -> Path:
+    return _path_from_root(repo_root, path_like)
+
+
+def _path_lookup_key(path_like: str | Path, *, roots: list[Path]) -> str:
+    path = Path(path_like)
+    if not path.is_absolute():
+        return str(path)
+    for root in roots:
+        try:
+            return str(path.resolve().relative_to(root.resolve()))
+        except ValueError:
+            continue
+    return str(path.resolve())
 
 
 def _rel(repo_root: Path, path: Path) -> str:
@@ -46,6 +57,82 @@ def _artifact_metadata(profile: dict) -> dict:
         "profile_family": profile["family_id"],
         "profile_sources": profile["profile_sources"],
     }
+
+
+def resolve_module_context(
+    module_path: str | Path | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
+) -> dict:
+    repo = _repo_root(repo_root)
+    source_tree_path = Path(source_tree).resolve() if source_tree is not None else None
+
+    lookup_key = None
+    if module_path is not None:
+        roots = [repo]
+        if source_tree_path is not None:
+            roots.insert(0, source_tree_path)
+        lookup_key = _path_lookup_key(module_path, roots=roots)
+
+    profile = profiles.resolve_module_profile(module_path=lookup_key, profile_id=profile_id)
+    source_profile = profile.get("source", {})
+    landing_profile = profile.get("landing", {})
+    source_tree_role = source_profile.get("tree", "kernel-tree")
+
+    if source_tree_role == "external-tree":
+        if source_tree_path is None:
+            raise ValueError(
+                f"Profile `{profile['profile_id']}` requires `--source-tree` because its source tree is external."
+            )
+        source_root = source_tree_path
+    else:
+        source_root = repo
+
+    source_module_relpath = source_profile.get("module_path", profile["module_path"])
+    source_module = _path_from_root(source_root, source_module_relpath)
+    module_id = profile["module_id"]
+    driver_rust_path = landing_profile.get("driver_rust_path", profile["driver_rust_path"])
+    module_dir = landing_profile.get("module_dir", str(Path(driver_rust_path).parent))
+    kconfig_path = landing_profile.get("kconfig_path", f"{module_dir}/Kconfig")
+    makefile_path = landing_profile.get("makefile_path", f"{module_dir}/Makefile")
+    artifact_dir = profile.get("artifact_dir", f"Documentation/rust/c2saferust/{module_id}")
+
+    return {
+        "repo_root": repo,
+        "source_root": source_root,
+        "source_tree_role": source_tree_role,
+        "profile": profile,
+        "profile_id": profile["profile_id"],
+        "module_id": module_id,
+        "module_path": source_module_relpath,
+        "module_c_path": _rel(source_root, source_module),
+        "module_c_path_in_repo": _rel(repo, source_module) if source_root == repo else None,
+        "module_source_path": source_module,
+        "module_dir": module_dir,
+        "kconfig_path": kconfig_path,
+        "makefile_path": makefile_path,
+        "driver_rust_path": driver_rust_path,
+        "artifact_dir": artifact_dir,
+        "kbuild_mode": profile.get("kbuild", {}).get("mode", "replace-existing-c-object"),
+        "source_tree": str(source_root),
+    }
+
+
+def _module_profile(
+    repo_root: Path,
+    module_path: str | Path | None = None,
+    *,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
+) -> dict:
+    return resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )["profile"]
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -177,19 +264,53 @@ def _strip_rust_noncode(text: str) -> str:
     return "".join(result)
 
 
+def _enclosing_pattern(lines: list[str], index: int, pattern: Pattern[str]) -> str:
+    for idx in range(index, -1, -1):
+        match = pattern.search(lines[idx])
+        if match:
+            return lines[idx].strip()
+    return ""
+
+
+def _safety_comment_window(lines: list[str], index: int) -> str:
+    comments: list[str] = []
+    for idx in range(index - 1, -1, -1):
+        line = lines[idx].strip()
+        if not line:
+            if comments:
+                break
+            continue
+        if "SAFETY" in line and (line.startswith("//") or line.startswith("/*")):
+            comments.insert(0, line)
+            continue
+        if comments:
+            break
+    return "\n".join(comments)
+
+
+def _source_window(lines: list[str], index: int, radius: int = 2) -> str:
+    start = max(0, index - radius)
+    end = min(len(lines), index + radius + 1)
+    return "\n".join(lines[start:end])
+
+
 def _find_rust_unsafe_sites(repo_root: Path, relative_paths: list[str]) -> list[dict]:
     sites: list[dict] = []
+    fn_pattern = re.compile(r"\bfn\s+[\w_]+")
+    impl_pattern = re.compile(r"\bimpl(?:<[^>]+>)?(?:\s|$)")
     for relative_path in relative_paths:
         path = _path_from_repo(repo_root, relative_path)
         if not path.exists():
             continue
-        stripped = _strip_rust_noncode(_load_text(path))
+        raw_text = _load_text(path)
+        raw_lines = raw_text.splitlines()
+        stripped = _strip_rust_noncode(raw_text)
         for line_number, line in enumerate(stripped.splitlines(), start=1):
             if "unsafe" not in line:
                 continue
             if re.search(r"\bunsafe\s+impl\b", line):
                 kind = "unsafe-impl"
-            elif re.search(r"\bunsafe\s+fn\b", line):
+            elif re.search(r"\bunsafe\b[^\n{;]*\bfn\b", line):
                 kind = "unsafe-fn"
             elif re.search(r"\bunsafe\s+trait\b", line):
                 kind = "unsafe-trait"
@@ -198,14 +319,18 @@ def _find_rust_unsafe_sites(repo_root: Path, relative_paths: list[str]) -> list[
             else:
                 kind = "unsafe-token"
 
-            sites.append(
-                {
-                    "file": relative_path,
-                    "line": line_number,
-                    "unsafe_kind": kind,
-                    "source_excerpt": line.strip(),
-                }
-            )
+            idx = line_number - 1
+            site = {
+                "file": relative_path,
+                "line": line_number,
+                "unsafe_kind": kind,
+                "source_excerpt": line.strip(),
+                "safety_comment_window": _safety_comment_window(raw_lines, idx),
+                "source_window": _source_window(raw_lines, idx),
+                "enclosing_item": _enclosing_pattern(raw_lines, idx, fn_pattern),
+                "enclosing_impl_type": _enclosing_pattern(raw_lines, idx, impl_pattern),
+            }
+            sites.append(site)
     return sites
 
 
@@ -239,15 +364,45 @@ def _collect_evidence_context(profile: dict, abstraction_plan: dict) -> dict[str
     return resolved
 
 
-def _match_unsafe_obligation_ids(profile: dict, relative_path: str, excerpt: str) -> list[str]:
+def _listify(value: object) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _text_contains_any(text: str, needles: list[str]) -> bool:
+    return not needles or any(needle in text for needle in needles)
+
+
+def _text_matches_any(text: str, patterns: list[str]) -> bool:
+    return not patterns or any(re.search(pattern, text, re.MULTILINE) for pattern in patterns)
+
+
+def _match_unsafe_obligation_ids(profile: dict, site: dict) -> list[str]:
     matchers = _profile_analysis(profile).get("unsafe_site_matchers", [])
     matched: list[str] = []
     for matcher in matchers:
         file_suffix = matcher.get("file_suffix")
-        if file_suffix and not relative_path.endswith(file_suffix):
+        if file_suffix and not site["file"].endswith(file_suffix):
             continue
-        tokens = matcher.get("excerpt_contains_any", [])
-        if tokens and not any(token in excerpt for token in tokens):
+        unsafe_kinds = _listify(matcher.get("unsafe_kind")) + _listify(matcher.get("unsafe_kinds"))
+        if unsafe_kinds and site["unsafe_kind"] not in unsafe_kinds:
+            continue
+        if not _text_contains_any(site["source_excerpt"], matcher.get("excerpt_contains_any", [])):
+            continue
+        if not _text_matches_any(site["source_excerpt"], matcher.get("excerpt_matches_any", [])):
+            continue
+        if not _text_contains_any(site["enclosing_item"], matcher.get("enclosing_item_contains_any", [])):
+            continue
+        if not _text_contains_any(site["enclosing_impl_type"], matcher.get("enclosing_impl_contains_any", [])):
+            continue
+        if not _text_contains_any(site["safety_comment_window"], matcher.get("safety_comment_contains_any", [])):
+            continue
+        if not _text_contains_any(site["source_window"], matcher.get("source_window_contains_any", [])):
+            continue
+        if not _text_matches_any(site["source_window"], matcher.get("source_window_matches_any", [])):
             continue
         matched.extend(matcher.get("obligation_ids", []))
     return _dedupe_preserve_order(matched)
@@ -261,11 +416,19 @@ def _extract_includes(source_text: str) -> list[str]:
     return seen
 
 
+def _is_public_binding_header(header: str) -> bool:
+    return header.startswith(("linux/", "net/", "uapi/", "asm/", "trace/", "rust/"))
+
+
 def _collect_rust_net_modules(repo_root: Path) -> list[str]:
     net_dir = repo_root / "rust" / "kernel" / "net"
     if not net_dir.exists():
         return []
     return sorted(str(path.relative_to(repo_root)) for path in net_dir.rglob("*.rs"))
+
+
+def _collect_existing_rust_modules(repo_root: Path, relpaths: list[str]) -> list[str]:
+    return sorted(_dedupe_preserve_order([relpath for relpath in relpaths if _file_exists(repo_root, relpath)]))
 
 
 def _artifact_root(
@@ -300,10 +463,113 @@ def _artifact_path_for(
     return _rel(repo, _artifact_root(repo, artifact_root) / module_id / filename)
 
 
+def module_lifecycle_config_requirements(
+    module_path: str | Path | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
+) -> dict:
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    profile = context["profile"]
+    build_validation = profile.get("build_validation", {})
+    lifecycle_profile = build_validation.get("module_lifecycle_config", {})
+    filename = lifecycle_profile.get("artifact_filename", "module-lifecycle.config")
+    required_config_lines = list(lifecycle_profile.get("required_config_lines", []))
+
+    return {
+        "schema_version": 1,
+        "artifact_type": "module-lifecycle-config-requirements",
+        "module_id": context["module_id"],
+        "module_c_path": context["module_c_path"],
+        "driver_rust_path": context["driver_rust_path"],
+        "enabled": bool(required_config_lines),
+        "artifact_filename": filename,
+        "artifact_path": _artifact_path_for(
+            context["module_id"],
+            filename,
+            repo_root=context["repo_root"],
+            artifact_root=artifact_root,
+        ),
+        "required_config_lines": required_config_lines,
+        **_artifact_metadata(profile),
+    }
+
+
+def render_module_lifecycle_config(
+    module_path: str | Path | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
+) -> str:
+    requirements = module_lifecycle_config_requirements(
+        module_path,
+        repo_root=repo_root,
+        artifact_root=artifact_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    if not requirements["required_config_lines"]:
+        return ""
+    return "\n".join(requirements["required_config_lines"]) + "\n"
+
+
+def _default_command_semantics_verification(completion_mode: str) -> dict:
+    if completion_mode == "status-gated":
+        return {
+            "must_contain": ["run_command_locked"],
+            "must_not_contain": ["issue_command_locked"],
+        }
+    if completion_mode in {"readback-gated", "issue-only"}:
+        return {
+            "must_contain": ["issue_command_locked"],
+            "must_not_contain": ["run_command_locked"],
+        }
+    raise ValueError(f"Unknown command completion mode {completion_mode!r}")
+
+
+def _build_command_semantics_entries(profile: dict) -> list[dict]:
+    semantics_profile = profile.get("command_semantics", {})
+    entries = []
+    for command in semantics_profile.get("commands", []):
+        defaults = _default_command_semantics_verification(command["completion_mode"])
+        verification = dict(command.get("verification", {}))
+        entries.append(
+            {
+                "id": command["id"],
+                "helper": command["helper"],
+                "command": command["command"],
+                "completion_mode": command["completion_mode"],
+                "success_witness": command["success_witness"],
+                "failure_witness": command["failure_witness"],
+                "release_best_effort": command.get("release_best_effort", False),
+                "c_evidence": command.get("c_evidence", {}),
+                "verification": {
+                    "must_contain": _dedupe_preserve_order(
+                        [*defaults["must_contain"], *verification.get("must_contain", [])]
+                    ),
+                    "must_not_contain": _dedupe_preserve_order(
+                        [*defaults["must_not_contain"], *verification.get("must_not_contain", [])]
+                    ),
+                },
+            }
+        )
+    return entries
+
+
 def _planning_artifact_builders() -> dict[str, object]:
     return {
         "kbuild-plan.json": build_kbuild_plan,
         "binding-gap-audit.json": build_binding_gap_audit,
+        "external-header-plan.json": build_external_header_plan,
         "helper-audit.json": build_helper_audit,
         "kbuild-patch-plan.json": build_kbuild_patch_plan,
         "bindings-patch-plan.json": build_bindings_patch_plan,
@@ -311,6 +577,7 @@ def _planning_artifact_builders() -> dict[str, object]:
         "abstraction-plan.json": build_abstraction_plan,
         "unsafe-obligations.json": build_unsafe_obligations,
         "translation-plan.json": build_translation_plan,
+        "command-semantics.json": build_command_semantics,
         "safety-policy.json": build_safety_policy,
         "soundness-discharge.json": build_soundness_discharge,
         "agent-workflow-plan.json": build_agent_workflow_plan,
@@ -318,14 +585,22 @@ def _planning_artifact_builders() -> dict[str, object]:
 
 
 def write_planning_artifacts(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     output_dir: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     destination = (
         Path(output_dir)
         if output_dir is not None
@@ -335,10 +610,36 @@ def write_planning_artifacts(
 
     generated = []
     for filename, builder in _planning_artifact_builders().items():
-        payload = builder(module_path, repo_root=repo, artifact_root=artifact_root)
+        payload = builder(
+            module_path,
+            repo_root=repo,
+            artifact_root=artifact_root,
+            profile_id=profile["profile_id"],
+            source_tree=source_tree,
+        )
         target = destination / filename
         write_json(target, payload)
         generated.append(_rel(repo, target))
+
+    lifecycle_requirements = module_lifecycle_config_requirements(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    if lifecycle_requirements["enabled"]:
+        config_target = destination / lifecycle_requirements["artifact_filename"]
+        config_target.write_text(
+            render_module_lifecycle_config(
+                module_path,
+                repo_root=repo,
+                artifact_root=artifact_root,
+                profile_id=profile["profile_id"],
+                source_tree=source_tree,
+            )
+        )
+        generated.append(_rel(repo, config_target))
 
     return {
         "schema_version": 1,
@@ -374,6 +675,19 @@ def _find_kconfig_block_end_line(text: str, symbol: str) -> int | None:
             break
         end_line = line_number
     return end_line
+
+
+def _last_line_number(text: str) -> int | None:
+    lines = text.splitlines()
+    return len(lines) if lines else None
+
+
+def _find_makefile_line_for_object(text: str, object_name: str) -> tuple[str | None, int | None]:
+    for match in MAKEFILE_ENTRY_RE.finditer(text):
+        if match.group(2) == object_name:
+            line = match.group(0)
+            return line, _line_number_of_exact_line(text, line)
+    return None, None
 
 
 def _extract_brace_body(text: str, open_brace_index: int) -> str:
@@ -432,11 +746,13 @@ def _extract_initializer_fields(initializer_body: str | None) -> list[dict]:
     ]
 
 
-def _initializer_field_map(initializer_body: str | None) -> dict[str, str]:
-    return {
-        entry["field"]: entry["value"]
-        for entry in _extract_initializer_fields(initializer_body)
-    }
+def _initializer_field_map(initializer_body: str | None, *, prefer_first: bool = False) -> dict[str, str]:
+    field_map: dict[str, str] = {}
+    for entry in _extract_initializer_fields(initializer_body):
+        if prefer_first and entry["field"] in field_map:
+            continue
+        field_map[entry["field"]] = entry["value"]
+    return field_map
 
 
 def _extract_pointer_field_assignments(body: str | None, prefix: str) -> list[dict]:
@@ -549,16 +865,54 @@ def _binding_header_plan(
     binding_header_decisions: dict[str, dict],
     default_decision: dict | None = None,
 ) -> dict:
-    return binding_header_decisions.get(
-        header,
-        default_decision
-        or {
-            "action": "add_to_bindings",
-            "reason": "Direct source include is missing from `bindings_helper.h`; no explicit override rule exists.",
-            "required_symbols": [],
-            "mvp_blocking": False,
-        },
-    )
+    if header in binding_header_decisions:
+        return binding_header_decisions[header]
+    if default_decision is not None:
+        return default_decision
+    return {
+        "action": "add_to_bindings",
+        "reason": "Direct source include is missing from `bindings_helper.h`; no explicit override rule exists.",
+        "required_symbols": [],
+        "mvp_blocking": False,
+    }
+
+
+def _external_header_plan(
+    header: str,
+    header_decisions: dict[str, dict],
+    default_decision: dict | None = None,
+) -> dict:
+    if header in header_decisions:
+        return header_decisions[header]
+    if default_decision is not None:
+        return default_decision
+    return {
+        "action": "manual_review",
+        "reason": "Private source header needs an explicit landing or omission decision before driver codegen.",
+        "required_symbols": [],
+        "mvp_blocking": True,
+    }
+
+
+def _find_external_header_sources(source_root: Path, header: str, *, limit: int = 8) -> list[Path]:
+    basename = Path(header).name
+    candidates: list[Path] = []
+
+    def _append(path: Path) -> None:
+        resolved = path.resolve()
+        if path.exists() and resolved not in {item.resolve() for item in candidates}:
+            candidates.append(path)
+
+    _append(_path_from_root(source_root, header))
+    _append(source_root / basename)
+
+    if len(candidates) < limit and source_root.exists():
+        for match in sorted(source_root.rglob(basename)):
+            _append(match)
+            if len(candidates) >= limit:
+                break
+
+    return candidates
 
 
 def _build_binding_patch_units(bindings_helper_text: str, headers: list[dict], target_path: str) -> list[dict]:
@@ -643,6 +997,31 @@ def _helper_include_anchor(helpers_aggregate_text: str, helper_file_name: str) -
     return (max(previous_candidates) if previous_candidates else None, min(next_candidates) if next_candidates else None)
 
 
+def _helper_layout(repo: Path) -> dict[str, object]:
+    helper_dir = repo / "rust" / "helpers"
+    aggregate_path = helper_dir / "helpers.c"
+    if aggregate_path.exists():
+        helper_files = sorted(path.name for path in helper_dir.glob("*.c"))
+        helper_text = "\n".join((helper_dir / name).read_text() for name in helper_files)
+        return {
+            "helper_dir": helper_dir,
+            "aggregate_path": aggregate_path,
+            "helper_files": helper_files,
+            "helper_text": helper_text,
+            "uses_helper_shards": True,
+        }
+
+    legacy_aggregate = repo / "rust" / "helpers.c"
+    helper_text = legacy_aggregate.read_text() if legacy_aggregate.exists() else ""
+    return {
+        "helper_dir": repo / "rust",
+        "aggregate_path": legacy_aggregate,
+        "helper_files": [legacy_aggregate.name] if legacy_aggregate.exists() else [],
+        "helper_text": helper_text,
+        "uses_helper_shards": False,
+    }
+
+
 def _file_exists(repo_root: Path, relpath: str) -> bool:
     return (repo_root / relpath).exists()
 
@@ -651,29 +1030,50 @@ def _read_if_exists(path: Path) -> str:
     return path.read_text() if path.exists() else ""
 
 
-def _pattern_present(text: str, pattern: str) -> bool:
-    return (
-        pattern in text
-        or _normalize_whitespace(pattern) in _normalize_whitespace(text)
-        or _compact_whitespace(pattern) in _compact_whitespace(text)
-    )
+def _implemented_module_maps(profile: dict) -> tuple[dict[str, object], dict[str, object]]:
+    module_map = profile.get("implemented_rust_modules", profile.get("implemented_net_modules", {}))
+    return module_map.get("mvp", {}), module_map.get("post_mvp", {})
 
 
-def _area_is_implemented(repo_root: Path, area: str, relpath: str, metadata: dict) -> bool:
-    path = repo_root / relpath
-    if not path.exists():
+def _implemented_module_path(descriptor: object) -> str | None:
+    if isinstance(descriptor, str):
+        return descriptor
+    if isinstance(descriptor, dict):
+        path = descriptor.get("path")
+        return path if isinstance(path, str) else None
+    return None
+
+
+def _module_surface_is_present(repo_root: Path, descriptor: object) -> bool:
+    path = _implemented_module_path(descriptor)
+    if path is None or not _file_exists(repo_root, path):
         return False
+    if not isinstance(descriptor, dict):
+        return True
 
-    text = _load_text(path)
-    markers = metadata.get("implementation_markers", [])
-    if markers and not all(_pattern_present(text, marker) for marker in markers):
-        return False
-
-    net_root = _read_if_exists(repo_root / "rust" / "kernel" / "net.rs")
-    if Path(relpath).parent == Path("rust/kernel/net") and Path(relpath).stem == area:
-        return f"pub mod {area};" in net_root
-
+    text = _load_text(_path_from_repo(repo_root, path))
+    normalized_text = _normalize_whitespace(text)
+    compact_text = _compact_whitespace(text)
+    for pattern in descriptor.get("must_contain", []):
+        if (
+            pattern not in text
+            and _normalize_whitespace(pattern) not in normalized_text
+            and _compact_whitespace(pattern) not in compact_text
+        ):
+            return False
     return True
+
+
+def _implemented_areas(
+    repo_root: Path,
+    mvp_modules: dict[str, object],
+    post_mvp_modules: dict[str, object],
+) -> set[str]:
+    implemented = set()
+    for area, descriptor in {**mvp_modules, **post_mvp_modules}.items():
+        if _module_surface_is_present(repo_root, descriptor):
+            implemented.add(area)
+    return implemented
 
 
 def _net_scope_assessment(
@@ -714,7 +1114,7 @@ def _net_scope_assessment(
         implemented_areas=implemented_area_list,
         implemented_areas_or_default=implemented_or_default,
         module_id=module_id,
-        )
+    )
 
 
 def _translation_callback_specs(translation_profile: dict) -> list[dict]:
@@ -743,18 +1143,18 @@ def _extract_callback_table(source_text: str, struct_name: str) -> tuple[str | N
     initializer_name = _find_initializer_name(source_text, struct_name)
     initializer_body = _extract_initializer_body(source_text, initializer_name) if initializer_name else None
     fields = _extract_initializer_fields(initializer_body)
-    return initializer_name, initializer_body, fields, {entry["field"]: entry["value"] for entry in fields}
+    return initializer_name, initializer_body, fields, _initializer_field_map(initializer_body)
 
 
 def _build_link_type_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
     translation_profile = profile["translation"]
-    rtnl_initializer_name, rtnl_body, rtnl_fields, rtnl_field_map = _extract_callback_table(
+    rtnl_initializer_name, _rtnl_body, rtnl_fields, rtnl_field_map = _extract_callback_table(
         source_text, "rtnl_link_ops"
     )
-    netdev_initializer_name, netdev_body, netdev_fields, netdev_field_map = _extract_callback_table(
+    netdev_initializer_name, _netdev_body, netdev_fields, netdev_field_map = _extract_callback_table(
         source_text, "net_device_ops"
     )
-    ethtool_initializer_name, ethtool_body, ethtool_fields, ethtool_field_map = _extract_callback_table(
+    ethtool_initializer_name, _ethtool_body, ethtool_fields, ethtool_field_map = _extract_callback_table(
         source_text, "ethtool_ops"
     )
 
@@ -840,11 +1240,65 @@ def _build_link_type_source_inventory(profile: dict, source_text: str, module_id
     return inventory, field_maps
 
 
+def _build_pci_miscdevice_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
+    translation_profile = profile["translation"]
+    pci_initializer_name, _pci_body, pci_fields, pci_field_map = _extract_callback_table(source_text, "pci_driver")
+    fops_initializer_name, _fops_body, fops_fields, fops_field_map = _extract_callback_table(source_text, "file_operations")
+
+    field_maps = {
+        "pci_driver": pci_field_map,
+        "file_operations": fops_field_map,
+    }
+
+    callback_calls: dict[str, list[str]] = {}
+    for spec in _translation_callback_specs(translation_profile):
+        symbol = field_maps.get(spec["source"], {}).get(spec["field"])
+        body = _extract_function_body(source_text, symbol) if symbol else None
+        callback_calls[spec["field"]] = _extract_call_sites(body)
+
+    inventory = {
+        "private_struct_fields": _extract_private_struct_fields(source_text, module_id),
+        "callback_tables": {
+            "pci_driver": {
+                "name": pci_initializer_name,
+                "fields": pci_fields,
+            },
+            "file_operations": {
+                "name": fops_initializer_name,
+                "fields": fops_fields,
+            },
+        },
+        "pci_driver": {
+            "name": pci_initializer_name,
+            "fields": pci_fields,
+        },
+        "file_operations": {
+            "name": fops_initializer_name,
+            "fields": fops_fields,
+        },
+        "setup_field_writes": [],
+        "validate_checks": [],
+        "open_calls": [],
+        "open_tap_assignments": [],
+        "stop_calls": [],
+        "xmit_calls": [],
+        "stats_calls": [],
+        "callback_calls": callback_calls,
+    }
+    return inventory, field_maps
+
+
 def _build_phy_driver_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
     translation_profile = profile["translation"]
-    phy_initializer_name, _phy_body, phy_fields, phy_field_map = _extract_callback_table(source_text, "phy_driver")
+    phy_initializer_name = _find_initializer_name(source_text, "phy_driver")
+    phy_initializer_body = _extract_initializer_body(source_text, phy_initializer_name) if phy_initializer_name else None
+    phy_fields = _extract_initializer_fields(phy_initializer_body)
+    phy_field_map = _initializer_field_map(phy_initializer_body, prefer_first=True)
 
-    field_maps = {"phy_driver": phy_field_map}
+    field_maps = {
+        "phy_driver": phy_field_map,
+    }
+
     callback_calls: dict[str, list[str]] = {}
     for spec in _translation_callback_specs(translation_profile):
         symbol = field_maps.get(spec["source"], {}).get(spec["field"])
@@ -857,11 +1311,13 @@ def _build_phy_driver_source_inventory(profile: dict, source_text: str, module_i
             "phy_driver": {
                 "name": phy_initializer_name,
                 "fields": phy_fields,
-            }
+                "field_map": phy_field_map,
+            },
         },
         "phy_driver": {
             "name": phy_initializer_name,
             "fields": phy_fields,
+            "field_map": phy_field_map,
         },
         "setup_field_writes": [],
         "validate_checks": [],
@@ -877,29 +1333,42 @@ def _build_phy_driver_source_inventory(profile: dict, source_text: str, module_i
 
 def _build_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
     source_model = _profile_analysis(profile).get("source_model", "link_type_rtnl")
+    if source_model == "pci_miscdevice":
+        return _build_pci_miscdevice_source_inventory(profile, source_text, module_id)
     if source_model == "phy_driver":
         return _build_phy_driver_source_inventory(profile, source_text, module_id)
     return _build_link_type_source_inventory(profile, source_text, module_id)
 
 
 def build_kbuild_plan(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
-    module = _path_from_repo(repo, module_path)
-    module_dir = module.parent
-    makefile = module_dir / "Makefile"
-    kconfig = module_dir / "Kconfig"
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
+    module = context["module_source_path"]
+    module_dir = _path_from_repo(repo, context["module_dir"])
+    makefile = _path_from_repo(repo, context["makefile_path"])
+    kconfig = _path_from_repo(repo, context["kconfig_path"])
 
+    module_id = context["module_id"]
+    kbuild_profile = profile.get("kbuild", {})
+    mode = kbuild_profile.get("mode", "replace-existing-c-object")
     module_object = module.with_suffix(".o").name
     makefile_text = _load_text(makefile)
     kconfig_text = _load_text(kconfig)
 
-    source_config_symbol = module.stem.upper().replace("-", "_")
+    source_config_symbol = kbuild_profile.get("source_config_symbol", module_id.upper().replace("-", "_"))
     current_makefile_line = None
     for match in MAKEFILE_ENTRY_RE.finditer(makefile_text):
         if match.group(2) == module_object:
@@ -907,62 +1376,94 @@ def build_kbuild_plan(
             current_makefile_line = match.group(0)
             break
 
-    kbuild_profile = profile.get("kbuild", {})
-    rust_symbol = kbuild_profile.get("rust_config_symbol", f"{source_config_symbol}_RUST")
-    has_rust_switch = (
-        f"CONFIG_{rust_symbol}" in makefile_text
-        or re.search(rf"^config {rust_symbol}$", kconfig_text, re.MULTILINE) is not None
-    )
-
-    rust_prompt = kbuild_profile.get("rust_config_prompt", f"Rust implementation of {module.stem}")
-    rust_depends_on = kbuild_profile.get("rust_depends_on", f"RUST && {source_config_symbol}")
-    rust_help = kbuild_profile.get(
-        "rust_help",
-        [
-            f"Builds the Rust implementation of {module.stem} ({module.stem}_rust.ko)",
-            f"instead of the original C implementation ({module.stem}.ko).",
-        ],
-    )
-
-    suggested_kconfig = [
-        f"config {rust_symbol}",
-        f'\tbool "{rust_prompt}"',
-        f"\tdepends on {rust_depends_on}",
-        "\thelp",
-        *[f"\t  {line}" for line in rust_help],
-    ]
-    suggested_makefile = [
-        f"ifdef CONFIG_{rust_symbol}",
-        f"  obj-$(CONFIG_{source_config_symbol}) += {module.stem}_rust.o",
-        "else",
-        f"  obj-$(CONFIG_{source_config_symbol}) += {module.stem}.o",
-        "endif",
-    ]
-    next_action = (
-        "Kbuild switch already exists; keep downstream patch/translation artifacts aligned."
-        if has_rust_switch
-        else f"Apply the Kbuild switch before generating {module.stem} Rust driver patches."
-    )
-
-    return {
-        "schema_version": 1,
-        "artifact_type": "kbuild-plan",
-        "module_id": module.stem,
-        "module_c_path": _rel(repo, module),
-        "module_dir": _rel(repo, module_dir),
-        "kconfig_path": _rel(repo, kconfig),
-        "makefile_path": _rel(repo, makefile),
-        "source_config_symbol": source_config_symbol,
-        "suggested_rust_config_symbol": rust_symbol,
-        "suggested_rust_object": f"{module.stem}_rust.o",
-        "current_state": {
+    if mode == "add-new-driver":
+        driver_config_symbol = kbuild_profile.get("driver_config_symbol", source_config_symbol)
+        driver_object = kbuild_profile.get("driver_object", Path(context["driver_rust_path"]).with_suffix(".o").name)
+        current_makefile_line = next(
+            (match.group(0) for match in MAKEFILE_ENTRY_RE.finditer(makefile_text) if match.group(2) == driver_object),
+            current_makefile_line,
+        )
+        current_kconfig_present = re.search(rf"^config {driver_config_symbol}$", kconfig_text, re.MULTILINE) is not None
+        current_driver_entry_present = current_makefile_line is not None and current_kconfig_present
+        rust_symbol = driver_config_symbol
+        suggested_kconfig = [
+            f"config {driver_config_symbol}",
+            f'\ttristate "{kbuild_profile.get("driver_prompt", f"Rust driver for {module_id}")}"',
+            f"\tdepends on {kbuild_profile.get('driver_depends_on', 'RUST')}",
+            "\thelp",
+            *[f"\t  {line}" for line in kbuild_profile.get("driver_help", [f"Build the Rust {module_id} driver."])],
+        ]
+        suggested_makefile = [f"obj-$(CONFIG_{driver_config_symbol}) += {driver_object}"]
+        next_action = (
+            "Landing Kbuild entries already exist; keep downstream patch/translation artifacts aligned."
+            if current_driver_entry_present
+            else f"Add the new Rust-only Kbuild entries for `{module_id}` before generating driver patches."
+        )
+        current_state = {
+            "current_makefile_line": current_makefile_line,
+            "current_kconfig_present": current_kconfig_present,
+            "current_rust_switch_present": current_driver_entry_present,
+            "current_driver_entry_present": current_driver_entry_present,
+        }
+        suggested_object = driver_object
+        source_config_symbol = driver_config_symbol
+    else:
+        rust_symbol = kbuild_profile.get("rust_config_symbol", f"{source_config_symbol}_RUST")
+        current_rust_switch_present = (
+            f"CONFIG_{rust_symbol}" in makefile_text
+            or re.search(rf"^config {rust_symbol}$", kconfig_text, re.MULTILINE) is not None
+        )
+        rust_prompt = kbuild_profile.get("rust_config_prompt", f"Rust implementation of {module_id}")
+        rust_depends_on = kbuild_profile.get("rust_depends_on", f"RUST && {source_config_symbol}")
+        rust_help = kbuild_profile.get(
+            "rust_help",
+            [
+                f"Builds the Rust implementation of {module_id} ({module_id}_rust.ko)",
+                f"instead of the original C implementation ({module_id}.ko).",
+            ],
+        )
+        suggested_kconfig = [
+            f"config {rust_symbol}",
+            f'\tbool "{rust_prompt}"',
+            f"\tdepends on {rust_depends_on}",
+            "\thelp",
+            *[f"\t  {line}" for line in rust_help],
+        ]
+        suggested_makefile = [
+            f"ifdef CONFIG_{rust_symbol}",
+            f"  obj-$(CONFIG_{source_config_symbol}) += {module_id}_rust.o",
+            "else",
+            f"  obj-$(CONFIG_{source_config_symbol}) += {module_id}.o",
+            "endif",
+        ]
+        next_action = (
+            "Kbuild switch already exists; keep downstream patch/translation artifacts aligned."
+            if current_rust_switch_present
+            else f"Apply the Kbuild switch before generating {module_id} Rust driver patches."
+        )
+        current_state = {
             "current_makefile_line": current_makefile_line,
             "current_kconfig_present": re.search(
                 rf"^config {source_config_symbol}$", kconfig_text, re.MULTILINE
             )
             is not None,
-            "current_rust_switch_present": has_rust_switch,
-        },
+            "current_rust_switch_present": current_rust_switch_present,
+        }
+        suggested_object = f"{module_id}_rust.o"
+
+    return {
+        "schema_version": 1,
+        "artifact_type": "kbuild-plan",
+        "module_id": module_id,
+        "module_c_path": context["module_c_path"],
+        "module_dir": _rel(repo, module_dir),
+        "kconfig_path": _rel(repo, kconfig),
+        "makefile_path": _rel(repo, makefile),
+        "kbuild_mode": mode,
+        "source_config_symbol": source_config_symbol,
+        "suggested_rust_config_symbol": rust_symbol,
+        "suggested_rust_object": suggested_object,
+        "current_state": current_state,
         "reference_pattern": {
             "kconfig_path": "drivers/net/phy/Kconfig",
             "makefile_path": "drivers/net/phy/Makefile",
@@ -976,25 +1477,35 @@ def build_kbuild_plan(
 
 
 def build_binding_gap_audit(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     direct_ffi_candidates = profile["direct_ffi_candidates"]
     helper_wrapper_candidates = profile["helper_wrapper_candidates"]
     abstraction_requirements = profile["abstraction_requirements"]
-    module = _path_from_repo(repo, module_path)
+    module = context["module_source_path"]
     source_text = _load_text(module)
     bindings_helper = repo / "rust" / "bindings" / "bindings_helper.h"
     bindings_helper_text = _load_text(bindings_helper)
 
     includes = _extract_includes(source_text)
+    public_includes = [header for header in includes if _is_public_binding_header(header)]
+    private_source_headers = [header for header in includes if header not in public_includes]
     helper_includes = set(_extract_includes(bindings_helper_text))
-    missing_headers = [header for header in includes if header not in helper_includes]
-    existing_headers = [header for header in includes if header in helper_includes]
+    missing_headers = [header for header in public_includes if header not in helper_includes]
+    existing_headers = [header for header in public_includes if header in helper_includes]
 
     direct_ffi_symbols = [
         symbol for symbol in direct_ffi_candidates if re.search(rf"\b{symbol}\s*\(", source_text)
@@ -1011,13 +1522,20 @@ def build_binding_gap_audit(
                 }
             )
 
+    mvp_modules, post_mvp_modules = _implemented_module_maps(profile)
+    current_rust_modules = _collect_existing_rust_modules(
+        repo,
+        list({**mvp_modules, **post_mvp_modules}.values()),
+    )
+
     return {
         "schema_version": 1,
         "artifact_type": "binding-gap-audit",
-        "module_id": module.stem,
-        "module_c_path": _rel(repo, module),
+        "module_id": context["module_id"],
+        "module_c_path": context["module_c_path"],
         "bindings_helper_path": _rel(repo, bindings_helper),
         "included_headers": includes,
+        "private_source_headers": private_source_headers,
         "headers_already_covered": existing_headers,
         "candidate_missing_binding_headers": missing_headers,
         "direct_ffi_symbols": [
@@ -1035,29 +1553,144 @@ def build_binding_gap_audit(
             for symbol in helper_gap_symbols
         ],
         "required_rust_abstractions": abstraction_gaps,
+        "current_rust_modules": current_rust_modules,
         "current_rust_net_modules": _collect_rust_net_modules(repo),
         "tool_assessment": {
-            "requires_new_rust_net_abstractions": bool(abstraction_gaps),
+            "requires_new_rust_abstractions": bool(abstraction_gaps),
+            "requires_new_rust_net_abstractions": bool(abstraction_gaps) if profile["family_id"] == "net-link-type" else False,
             "stage_2_can_be_driven_statically": True,
         },
         **_artifact_metadata(profile),
     }
 
 
-def build_helper_audit(
-    module_path: str | Path,
+def build_external_header_plan(
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    source_root = context["source_root"]
+    profile = context["profile"]
+    header_decisions = profile.get("external_header_decisions", {})
+    default_header_decision = profile.get("default_external_header_decision")
+
+    audit = build_binding_gap_audit(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+
+    header_plans = []
+    blocking_headers = []
+    for header in audit["private_source_headers"]:
+        decision = _external_header_plan(header, header_decisions, default_header_decision)
+        source_matches = _find_external_header_sources(source_root, header)
+        landing_path = decision.get("landing_path")
+        landing_exists = bool(landing_path and _file_exists(repo, landing_path))
+        action = decision["action"]
+
+        if action in {"ignore_private_header", "omit_from_upstream"}:
+            status = "no-landing-required"
+        elif action == "manual_review":
+            status = "manual-review"
+        elif action == "translate_to_rust_defs":
+            status = "rust-translation-pending"
+        else:
+            status = "already_applied" if landing_exists else "pending"
+
+        entry = {
+            "header": header,
+            "action": action,
+            "status": status,
+            "reason": decision["reason"],
+            "required_symbols": decision.get("required_symbols", []),
+            "mvp_blocking": decision.get("mvp_blocking", False),
+            "rust_strategy": decision.get("rust_strategy"),
+            "reference_urls": decision.get("reference_urls", []),
+            "source_present": bool(source_matches),
+            "source_matches": [_rel(source_root, path) for path in source_matches],
+            "landing": {
+                "path": landing_path,
+                "kind": decision.get("landing_kind"),
+                "exists": landing_exists,
+            }
+            if landing_path or decision.get("landing_kind")
+            else None,
+        }
+        header_plans.append(entry)
+
+        if entry["mvp_blocking"] and status in {"pending", "manual-review", "rust-translation-pending"}:
+            blocking_headers.append(header)
+
+    if not header_plans:
+        overall_status = "not-needed"
+    elif blocking_headers:
+        overall_status = "pending"
+    else:
+        overall_status = "ready"
+
+    return {
+        "schema_version": 1,
+        "artifact_type": "external-header-plan",
+        "module_id": context["module_id"],
+        "module_c_path": context["module_c_path"],
+        "source_tree_role": context["source_tree_role"],
+        "source_tree": context["source_tree"],
+        "inputs": {
+            "binding_gap_audit": _artifact_path_for(
+                context["module_id"],
+                "binding-gap-audit.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
+        },
+        "status": overall_status,
+        "private_source_headers": audit["private_source_headers"],
+        "blocking_headers": blocking_headers,
+        "header_plans": sorted(header_plans, key=lambda entry: entry["header"]),
+        "tool_assessment": {
+            "requires_external_header_landing": bool(header_plans),
+            "ready_for_driver_codegen": not blocking_headers,
+        },
+        **_artifact_metadata(profile),
+    }
+
+
+def build_helper_audit(
+    module_path: str | Path | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
+) -> dict:
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     helper_wrapper_candidates = profile["helper_wrapper_candidates"]
-    module = _path_from_repo(repo, module_path)
+    module = context["module_source_path"]
     source_text = _load_text(module)
-    helper_dir = repo / "rust" / "helpers"
-    helper_files = sorted(path.name for path in helper_dir.glob("*.c"))
-    helper_text = "\n".join((helper_dir / name).read_text() for name in helper_files)
+    helper_layout = _helper_layout(repo)
+    helper_dir = helper_layout["helper_dir"]
+    helper_files = helper_layout["helper_files"]
+    helper_text = helper_layout["helper_text"]
 
     helper_gap_symbols = _helper_symbols_used(source_text, helper_wrapper_candidates)
     existing_net_helpers = [
@@ -1070,9 +1703,11 @@ def build_helper_audit(
     return {
         "schema_version": 1,
         "artifact_type": "helper-audit",
-        "module_id": module.stem,
-        "module_c_path": _rel(repo, module),
+        "module_id": context["module_id"],
+        "module_c_path": context["module_c_path"],
         "helper_dir": _rel(repo, helper_dir),
+        "helper_aggregate_path": _rel(repo, helper_layout["aggregate_path"]),
+        "uses_helper_shards": helper_layout["uses_helper_shards"],
         "existing_helper_files": helper_files,
         "required_helper_wrappers": [
             {
@@ -1088,13 +1723,29 @@ def build_helper_audit(
 
 
 def build_kbuild_patch_plan(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    kbuild_plan = build_kbuild_plan(module_path, repo_root=repo, artifact_root=artifact_root)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
+    kbuild_profile = profile.get("kbuild", {})
+    kbuild_plan = build_kbuild_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
     makefile = _path_from_repo(repo, kbuild_plan["makefile_path"])
     kconfig = _path_from_repo(repo, kbuild_plan["kconfig_path"])
     makefile_text = _load_text(makefile)
@@ -1102,43 +1753,77 @@ def build_kbuild_patch_plan(
 
     current_makefile_line = kbuild_plan["current_state"]["current_makefile_line"]
     makefile_line = _line_number_of_exact_line(makefile_text, current_makefile_line)
-    kconfig_insert_after_line = _find_kconfig_block_end_line(
-        kconfig_text, kbuild_plan["source_config_symbol"]
-    )
+    kbuild_mode = kbuild_plan.get("kbuild_mode", "replace-existing-c-object")
     patch_required = not kbuild_plan["current_state"]["current_rust_switch_present"]
     patch_units = []
     if patch_required:
-        patch_units = [
-            {
-                "target_path": kbuild_plan["kconfig_path"],
-                "operation": "insert_after",
-                "anchor": {
-                    "symbol": kbuild_plan["source_config_symbol"],
-                    "line": kconfig_insert_after_line,
+        if kbuild_mode == "add-new-driver":
+            kconfig_anchor_symbol = kbuild_profile.get("kconfig_insert_after_symbol")
+            kconfig_anchor_line = (
+                _find_kconfig_block_end_line(kconfig_text, kconfig_anchor_symbol)
+                if kconfig_anchor_symbol
+                else _last_line_number(kconfig_text)
+            )
+            makefile_anchor_text = kbuild_profile.get("makefile_insert_after")
+            makefile_anchor_line = _line_number_of_exact_line(makefile_text, makefile_anchor_text)
+            patch_units = [
+                {
+                    "target_path": kbuild_plan["kconfig_path"],
+                    "operation": "insert_after",
+                    "anchor": {
+                        "symbol": kconfig_anchor_symbol,
+                        "line": kconfig_anchor_line,
+                    },
+                    "insert_lines": kbuild_plan["suggested_kconfig_snippet"],
+                    "reason": "Add the Rust-only config entry for the new landing driver.",
                 },
-                "insert_lines": kbuild_plan["suggested_kconfig_snippet"],
-                "reason": f"Introduce a Rust switch without replacing the existing `{kbuild_plan['source_config_symbol']}` user-facing symbol.",
-            },
-            {
-                "target_path": kbuild_plan["makefile_path"],
-                "operation": "replace_exact_line",
-                "anchor": {
-                    "line": makefile_line,
-                    "text": current_makefile_line,
+                {
+                    "target_path": kbuild_plan["makefile_path"],
+                    "operation": "insert_after",
+                    "anchor": {
+                        "line": makefile_anchor_line,
+                        "text": makefile_anchor_text,
+                    },
+                    "insert_lines": kbuild_plan["suggested_makefile_snippet"],
+                    "reason": "Add the Rust-only object line for the new landing driver.",
                 },
-                "replacement_lines": kbuild_plan["suggested_makefile_snippet"],
-                "reason": (
-                    f"Select `{kbuild_plan['suggested_rust_object']}` only when "
-                    f"`CONFIG_{kbuild_plan['suggested_rust_config_symbol']}=y`; otherwise keep the C object."
-                ),
-            },
-        ]
+            ]
+        else:
+            kconfig_insert_after_line = _find_kconfig_block_end_line(
+                kconfig_text, kbuild_plan["source_config_symbol"]
+            )
+            patch_units = [
+                {
+                    "target_path": kbuild_plan["kconfig_path"],
+                    "operation": "insert_after",
+                    "anchor": {
+                        "symbol": kbuild_plan["source_config_symbol"],
+                        "line": kconfig_insert_after_line,
+                    },
+                    "insert_lines": kbuild_plan["suggested_kconfig_snippet"],
+                    "reason": f"Introduce a Rust switch without replacing the existing `{kbuild_plan['source_config_symbol']}` user-facing symbol.",
+                },
+                {
+                    "target_path": kbuild_plan["makefile_path"],
+                    "operation": "replace_exact_line",
+                    "anchor": {
+                        "line": makefile_line,
+                        "text": current_makefile_line,
+                    },
+                    "replacement_lines": kbuild_plan["suggested_makefile_snippet"],
+                    "reason": (
+                        f"Select `{kbuild_plan['suggested_rust_object']}` only when "
+                        f"`CONFIG_{kbuild_plan['suggested_rust_config_symbol']}=y`; otherwise keep the C object."
+                    ),
+                },
+            ]
 
     return {
         "schema_version": 1,
         "artifact_type": "kbuild-patch-plan",
         "module_id": kbuild_plan["module_id"],
         "module_c_path": kbuild_plan["module_c_path"],
+        "kbuild_mode": kbuild_mode,
         "patch_required": patch_required,
         "status": "pending" if patch_required else "already_applied",
         "inputs": {
@@ -1155,29 +1840,54 @@ def build_kbuild_patch_plan(
                 "path": kbuild_plan["kconfig_path"],
                 "contains": f"config {kbuild_plan['suggested_rust_config_symbol']}",
             },
-            {
-                "path": kbuild_plan["makefile_path"],
-                "contains": f"ifdef CONFIG_{kbuild_plan['suggested_rust_config_symbol']}",
-            },
-            {
-                "path": kbuild_plan["makefile_path"],
-                "contains": f"obj-$(CONFIG_{kbuild_plan['source_config_symbol']}) += {kbuild_plan['suggested_rust_object']}",
-            },
+            *(
+                [
+                    {
+                        "path": kbuild_plan["makefile_path"],
+                        "contains": f"obj-$(CONFIG_{kbuild_plan['source_config_symbol']}) += {kbuild_plan['suggested_rust_object']}",
+                    }
+                ]
+                if kbuild_mode == "add-new-driver"
+                else [
+                    {
+                        "path": kbuild_plan["makefile_path"],
+                        "contains": f"ifdef CONFIG_{kbuild_plan['suggested_rust_config_symbol']}",
+                    },
+                    {
+                        "path": kbuild_plan["makefile_path"],
+                        "contains": f"obj-$(CONFIG_{kbuild_plan['source_config_symbol']}) += {kbuild_plan['suggested_rust_object']}",
+                    },
+                ]
+            ),
         ],
     }
 
 
 def build_bindings_patch_plan(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     binding_header_decisions = profile["bindings_header_decisions"]
-    default_binding_decision = profile.get("default_binding_header_decision")
-    audit = build_binding_gap_audit(module_path, repo_root=repo, artifact_root=artifact_root)
+    default_binding_header_decision = profile.get("default_binding_header_decision")
+    audit = build_binding_gap_audit(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
     bindings_helper = _path_from_repo(repo, audit["bindings_helper_path"])
     bindings_helper_text = _load_text(bindings_helper)
 
@@ -1185,11 +1895,7 @@ def build_bindings_patch_plan(
     deferred_headers = []
     rust_abstraction_headers = []
     for header in audit["candidate_missing_binding_headers"]:
-        decision = _binding_header_plan(
-            header,
-            binding_header_decisions,
-            default_decision=default_binding_decision,
-        )
+        decision = _binding_header_plan(header, binding_header_decisions, default_binding_header_decision)
         entry = {
             "header": header,
             "reason": decision["reason"],
@@ -1250,30 +1956,46 @@ def build_bindings_patch_plan(
 
 
 def build_helpers_patch_plan(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     helper_wrapper_candidates = profile["helper_wrapper_candidates"]
-    helper_audit = build_helper_audit(module_path, repo_root=repo, artifact_root=artifact_root)
-    helpers_aggregate = repo / "rust" / "helpers" / "helpers.c"
-    aggregate_text = _load_text(helpers_aggregate)
+    helper_audit = build_helper_audit(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    helpers_aggregate = _path_from_root(repo, helper_audit["helper_aggregate_path"])
+    aggregate_text = _load_text(helpers_aggregate) if helpers_aggregate.exists() else ""
     wrapper_specs = _helper_wrapper_specs(
         helper_audit["missing_helper_wrappers"],
         helper_wrapper_candidates,
     )
-    helper_file_name = "net.c"
+    helper_file_name = profile.get("planning", {}).get("helper_file_name", "net.c")
     insert_after, insert_before = _helper_include_anchor(aggregate_text, helper_file_name)
-    anchor_line = (
-        _line_number_of_exact_line(aggregate_text, f'#include "{insert_after}"')
-        if insert_after
-        else _line_number_of_exact_line(aggregate_text, f'#include "{insert_before}"')
-    )
+    if insert_after:
+        anchor_line = _line_number_of_exact_line(aggregate_text, f'#include "{insert_after}"')
+    elif insert_before:
+        anchor_line = _line_number_of_exact_line(aggregate_text, f'#include "{insert_before}"')
+    else:
+        anchor_line = _line_number_of_pattern(aggregate_text, r"^#include <")
     patch_units = []
     if wrapper_specs:
+        include_target = helper_audit["helper_aggregate_path"]
         patch_units = [
             {
                 "target_path": f"{helper_audit['helper_dir']}/{helper_file_name}",
@@ -1282,14 +2004,14 @@ def build_helpers_patch_plan(
                 "content_lines": _build_helper_file_content(wrapper_specs),
             },
             {
-                "target_path": f"{helper_audit['helper_dir']}/helpers.c",
+                "target_path": include_target,
                 "operation": "insert_after" if insert_after else "insert_before",
                 "anchor": {
-                    "file": insert_after or insert_before,
+                    "file": insert_after or insert_before or helpers_aggregate.name,
                     "line": anchor_line,
                 },
                 "insert_lines": [f'#include "{helper_file_name}"'],
-                "reason": "Compile the new helper shard through the existing aggregate translation unit while keeping alphabetical order.",
+                "reason": "Compile the new helper shard through the existing aggregate translation unit while keeping the helper include list ordered when that list exists.",
             },
         ]
 
@@ -1322,7 +2044,7 @@ def build_helpers_patch_plan(
         + (
             [
                 {
-                    "path": f"{helper_audit['helper_dir']}/helpers.c",
+                    "path": helper_audit["helper_aggregate_path"],
                     "contains": f'#include "{helper_file_name}"',
                 }
             ]
@@ -1439,42 +2161,123 @@ def _feedback_promoted_areas(feedback: dict | None) -> set[str]:
     }
 
 
+def _apply_feedback_to_soundness_rules(
+    feedback: dict | None,
+    rules: list[dict],
+    *,
+    artifact_type: str,
+) -> list[dict]:
+    if not feedback:
+        return rules
+
+    adjusted = [dict(rule) for rule in rules]
+    adjusted_by_id = {rule["id"]: rule for rule in adjusted}
+
+    for action in feedback.get("actions", []):
+        if action.get("type") != "relax_soundness_rule":
+            continue
+        if artifact_type not in action.get("targets", []):
+            continue
+
+        rule = adjusted_by_id.get(action.get("rule_id"))
+        if rule is None:
+            continue
+
+        remove_must_contain = set(action.get("remove_must_contain", []))
+        if remove_must_contain:
+            rule["must_contain"] = [
+                pattern for pattern in rule["must_contain"] if pattern not in remove_must_contain
+            ]
+
+        remove_must_not_contain = set(action.get("remove_must_not_contain", []))
+        if remove_must_not_contain:
+            rule["must_not_contain"] = [
+                pattern
+                for pattern in rule["must_not_contain"]
+                if pattern not in remove_must_not_contain
+            ]
+
+    return adjusted
+
+
 def _obligation_evidence_context(profile: dict, abstraction_plan: dict) -> dict[str, list]:
     return _collect_evidence_context(profile, abstraction_plan)
 
 
 def build_abstraction_plan(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     translation_profile = profile["translation"]
     abstraction_requirements = profile["abstraction_requirements"]
-    mvp_net_modules = profile["implemented_net_modules"]["mvp"]
-    post_mvp_net_modules = profile["implemented_net_modules"].get("post_mvp", {})
+    mvp_modules, post_mvp_modules = _implemented_module_maps(profile)
     feedback = _load_oracle_feedback(repo, profile["module_id"], artifact_root=artifact_root)
 
-    module = _path_from_repo(repo, module_path)
+    module = context["module_source_path"]
     source_text = _load_text(module)
-    binding_audit = build_binding_gap_audit(module_path, repo_root=repo, artifact_root=artifact_root)
-    helper_audit = build_helper_audit(module_path, repo_root=repo, artifact_root=artifact_root)
-    kbuild_patch_plan = build_kbuild_patch_plan(module_path, repo_root=repo, artifact_root=artifact_root)
-    bindings_patch_plan = build_bindings_patch_plan(module_path, repo_root=repo, artifact_root=artifact_root)
-    helpers_patch_plan = build_helpers_patch_plan(module_path, repo_root=repo, artifact_root=artifact_root)
+    binding_audit = build_binding_gap_audit(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    helper_audit = build_helper_audit(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    command_semantics = build_command_semantics(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    external_header_plan = build_external_header_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    kbuild_patch_plan = build_kbuild_patch_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    bindings_patch_plan = build_bindings_patch_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    helpers_patch_plan = build_helpers_patch_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
 
-    all_net_modules = {**mvp_net_modules, **post_mvp_net_modules}
-    area_paths = {
-        area: all_net_modules.get(area) or metadata["preferred_files"][0]
-        for area, metadata in abstraction_requirements.items()
-    }
-    implemented_areas = {
-        area
-        for area, relpath in area_paths.items()
-        if _area_is_implemented(repo, area, relpath, abstraction_requirements[area])
-    }
+    implemented_areas = _implemented_areas(repo, mvp_modules, post_mvp_modules)
     missing_mvp_areas = [area for area in abstraction_requirements if area not in implemented_areas]
     phase_4_prereqs = []
     if missing_mvp_areas:
@@ -1484,7 +2287,10 @@ def build_abstraction_plan(
             + "."
         )
     if kbuild_patch_plan["patch_required"]:
-        phase_4_prereqs.append("Apply the Kbuild switch so the Rust object can replace the C object.")
+        if kbuild_patch_plan.get("kbuild_mode") == "add-new-driver":
+            phase_4_prereqs.append("Add the landing Kbuild entries before driver codegen.")
+        else:
+            phase_4_prereqs.append("Apply the Kbuild switch so the Rust object can replace the C object.")
     if bindings_patch_plan["patch_required"]:
         phase_4_prereqs.append("Expose the remaining bindings headers before driver codegen.")
     if helper_audit["missing_helper_wrappers"]:
@@ -1493,10 +2299,16 @@ def build_abstraction_plan(
             + ", ".join(helper_audit["missing_helper_wrappers"])
             + "."
         )
+    if external_header_plan["blocking_headers"]:
+        phase_4_prereqs.append(
+            "Resolve external header/UAPI landing before driver codegen: "
+            + ", ".join(external_header_plan["blocking_headers"])
+            + "."
+        )
     phase_4_prereqs.extend(_feedback_blockers(feedback, "abstraction-plan"))
     phase_4_prereqs = _dedupe_preserve_order(phase_4_prereqs)
 
-    module_id = module.stem
+    module_id = context["module_id"]
     source_inventory, field_maps = _build_source_inventory(profile, source_text, module_id)
 
     promoted_callbacks = _feedback_promoted_callbacks(feedback)
@@ -1513,17 +2325,25 @@ def build_abstraction_plan(
 
     required_callbacks = _callback_symbols_from_specs(field_maps, required_specs)
     deferred_callbacks = _callback_symbols_from_specs(field_maps, deferred_specs)
+
     promoted_areas = _feedback_promoted_areas(feedback)
+    current_rust_modules = binding_audit.get("current_rust_modules", [])
 
     payload = {
         "schema_version": 1,
         "artifact_type": "abstraction-plan",
         "module_id": module_id,
-        "module_c_path": _rel(repo, module),
+        "module_c_path": context["module_c_path"],
         "inputs": {
             "kbuild_patch_plan": _artifact_path_for(
                 module_id,
                 "kbuild-patch-plan.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
+            "external_header_plan": _artifact_path_for(
+                module_id,
+                "external-header-plan.json",
                 repo_root=repo,
                 artifact_root=artifact_root,
             ),
@@ -1539,18 +2359,47 @@ def build_abstraction_plan(
                 repo_root=repo,
                 artifact_root=artifact_root,
             ),
+            "command_semantics": _artifact_path_for(
+                module_id,
+                "command-semantics.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
         },
         "goal": translation_profile["abstraction_goal"],
+        "current_rust_scope": {
+            "modules": current_rust_modules,
+            "implemented_areas": sorted(implemented_areas),
+            "assessment": (
+                _net_scope_assessment(
+                    profile,
+                    binding_audit["current_rust_net_modules"],
+                    implemented_areas,
+                    mvp_modules,
+                    module_id,
+                )
+                if profile["family_id"] == "net-link-type"
+                else (
+                    "The tree already exposes the currently implemented abstraction surfaces ({implemented}); the remaining blockers stay explicit in `abstraction_areas`."
+                ).format(
+                    implemented=", ".join(sorted(implemented_areas)) or "<none>",
+                )
+            ),
+        },
         "current_rust_net_scope": {
             "rust_net_root": _rel(repo, repo / "rust" / "kernel" / "net.rs"),
             "modules": binding_audit["current_rust_net_modules"],
             "implemented_areas": sorted(implemented_areas),
-            "assessment": _net_scope_assessment(
-                profile,
-                binding_audit["current_rust_net_modules"],
-                implemented_areas,
-                mvp_net_modules,
-                module_id,
+            "assessment": (
+                _net_scope_assessment(
+                    profile,
+                    binding_audit["current_rust_net_modules"],
+                    implemented_areas,
+                    mvp_modules,
+                    module_id,
+                )
+                if profile["family_id"] == "net-link-type"
+                else "Not a net-link-type target."
             ),
         },
         "source_inventory": source_inventory,
@@ -1573,22 +2422,22 @@ def build_abstraction_plan(
                 ],
             ),
             "helper_gaps": helper_audit["missing_helper_wrappers"],
+            "external_header_blockers": external_header_plan["blocking_headers"],
         },
         **_artifact_metadata(profile),
     }
 
+    all_rust_modules = {**mvp_modules, **post_mvp_modules}
     for area, metadata in abstraction_requirements.items():
         priority = metadata.get("priority", "mvp-blocker")
         if area in promoted_areas:
             priority = "mvp-blocker"
-        implementation_path = area_paths.get(area)
-        implemented = area in implemented_areas
         payload["abstraction_areas"].append(
             {
                 "area": area,
                 "priority": priority,
-                "status": "implemented" if implemented else "missing",
-                "implementation_path": implementation_path if implemented else None,
+                "status": "implemented" if area in implemented_areas else "missing",
+                "implementation_path": _implemented_module_path(all_rust_modules.get(area)) if area in implemented_areas else None,
                 "c_evidence": [item for item in metadata["patterns"] if item in source_text],
                 "required_surface": metadata["required_surface"],
                 "deferred_surface": metadata.get("deferred_surface", []),
@@ -1609,23 +2458,74 @@ def build_abstraction_plan(
 
 
 def build_translation_plan(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     translation_profile = profile["translation"]
     feedback = _load_oracle_feedback(repo, profile["module_id"], artifact_root=artifact_root)
-    module = _path_from_repo(repo, module_path)
-    module_id = module.stem
+    module_id = context["module_id"]
 
-    abstraction_plan = build_abstraction_plan(module_path, repo_root=repo, artifact_root=artifact_root)
-    unsafe_plan = build_unsafe_obligations(module_path, repo_root=repo, artifact_root=artifact_root)
-    kbuild_patch_plan = build_kbuild_patch_plan(module_path, repo_root=repo, artifact_root=artifact_root)
-    bindings_patch_plan = build_bindings_patch_plan(module_path, repo_root=repo, artifact_root=artifact_root)
-    helpers_patch_plan = build_helpers_patch_plan(module_path, repo_root=repo, artifact_root=artifact_root)
+    abstraction_plan = build_abstraction_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    unsafe_plan = build_unsafe_obligations(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    command_semantics = build_command_semantics(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    external_header_plan = build_external_header_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    kbuild_patch_plan = build_kbuild_patch_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    bindings_patch_plan = build_bindings_patch_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    helpers_patch_plan = build_helpers_patch_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
     inventory = abstraction_plan["source_inventory"]
 
     readiness_blockers = list(abstraction_plan["phase_4_readiness"]["required_before_driver_codegen"])
@@ -1636,7 +2536,7 @@ def build_translation_plan(
 
     setup_translations = []
     setup_translation_map = translation_profile.get("setup_translation_map", {})
-    for write in inventory.get("setup_field_writes", []):
+    for write in inventory["setup_field_writes"]:
         mapped = setup_translation_map.get(write["field"])
         entry = {
             "c_field": write["field"],
@@ -1656,7 +2556,7 @@ def build_translation_plan(
         setup_translations.append(entry)
 
     validate_translation = []
-    for check in inventory.get("validate_checks", []):
+    for check in inventory["validate_checks"]:
         matched_rule = next(
             (
                 rule
@@ -1685,8 +2585,8 @@ def build_translation_plan(
             )
 
     callback_fields = {
-        source: {entry["field"]: entry["value"] for entry in table["fields"]}
-        for source, table in inventory.get("callback_tables", {}).items()
+        table_name: table.get("field_map", {entry["field"]: entry["value"] for entry in table["fields"]})
+        for table_name, table in inventory.get("callback_tables", {}).items()
     }
     promoted_callbacks = _feedback_promoted_callbacks(feedback)
     callback_mapping = []
@@ -1698,9 +2598,15 @@ def build_translation_plan(
         entry = {
             "status": role["status"],
             "c_symbol": c_symbol,
-            "rust_surface": role["rust_surface"],
-            "body_plan": role["body_plan"],
         }
+        if "rust_surface" in role:
+            entry["rust_surface"] = role["rust_surface"]
+        if "behavior_contract" in role:
+            entry["behavior_contract"] = role["behavior_contract"]
+        if "body_plan" in role:
+            entry["body_plan"] = role["body_plan"]
+        if "c_evidence" in role:
+            entry["c_evidence"] = role["c_evidence"]
         if (source, field) in promoted_callbacks:
             entry["status"] = "required"
         callback_mapping.append(entry)
@@ -1709,6 +2615,8 @@ def build_translation_plan(
     for spec in translation_profile["deferred_callback_fields"]:
         if (spec["source"], spec["field"]) in promoted_callbacks:
             continue
+        if f"{spec['source']}.{spec['field']}" in translation_profile["callback_roles"]:
+            continue
         c_symbol = callback_fields.get(spec["source"], {}).get(spec["field"])
         if not c_symbol:
             continue
@@ -1716,8 +2624,17 @@ def build_translation_plan(
             {
                 "status": deferred_default["status"],
                 "c_symbol": c_symbol,
-                "rust_surface": deferred_default["rust_surface"],
-                "body_plan": deferred_default["body_plan"],
+                **(
+                    {"rust_surface": deferred_default["rust_surface"]}
+                    if "rust_surface" in deferred_default
+                    else {}
+                ),
+                **(
+                    {"behavior_contract": deferred_default["behavior_contract"]}
+                    if "behavior_contract" in deferred_default
+                    else {}
+                ),
+                **({"body_plan": deferred_default["body_plan"]} if "body_plan" in deferred_default else {}),
             }
         )
 
@@ -1725,12 +2642,18 @@ def build_translation_plan(
         "schema_version": 1,
         "artifact_type": "translation-plan",
         "module_id": module_id,
-        "module_c_path": _rel(repo, module),
-        "driver_rust_path": profile["driver_rust_path"],
+        "module_c_path": context["module_c_path"],
+        "driver_rust_path": context["driver_rust_path"],
         "inputs": {
             "kbuild_patch_plan": _artifact_path_for(
                 module_id,
                 "kbuild-patch-plan.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
+            "external_header_plan": _artifact_path_for(
+                module_id,
+                "external-header-plan.json",
                 repo_root=repo,
                 artifact_root=artifact_root,
             ),
@@ -1758,6 +2681,12 @@ def build_translation_plan(
                 repo_root=repo,
                 artifact_root=artifact_root,
             ),
+            "command_semantics": _artifact_path_for(
+                module_id,
+                "command-semantics.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
         },
         "goal": translation_profile["goal"],
         "readiness": {
@@ -1765,22 +2694,17 @@ def build_translation_plan(
             "blockers": readiness_blockers,
             "upstream_artifact_status": {
                 "kbuild_patch_plan": kbuild_patch_plan["status"],
+                "external_header_plan": external_header_plan["status"],
                 "bindings_patch_plan": bindings_patch_plan["status"],
                 "helpers_patch_plan": helpers_patch_plan["status"],
                 "abstraction_plan": (
                     "ready" if abstraction_plan["phase_4_readiness"]["ready_for_minimal_driver_codegen"] else "blocked"
                 ),
+                "command_semantics": command_semantics["status"],
             },
         },
-        "module_shell": translation_profile.get("module_shell", {}),
-        "private_state": translation_profile.get(
-            "private_state",
-            {
-                "type_name": None,
-                "layout": None,
-                "fields": [],
-            },
-        ),
+        "module_shell": translation_profile["module_shell"],
+        "private_state": translation_profile["private_state"],
         "callback_mapping": callback_mapping,
         "setup_translation": setup_translations,
         "validate_translation": validate_translation,
@@ -1807,16 +2731,77 @@ def build_translation_plan(
     return payload
 
 
-def build_unsafe_obligations(
-    module_path: str | Path,
+def build_command_semantics(
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
+    module_id = context["module_id"]
+    entries = _build_command_semantics_entries(profile)
+
+    return {
+        "schema_version": 1,
+        "artifact_type": "command-semantics",
+        "module_id": module_id,
+        "module_c_path": context["module_c_path"],
+        "driver_rust_path": context["driver_rust_path"],
+        "status": "configured" if entries else "not-configured",
+        "verification_mode": "helper-body-pattern",
+        "inputs": {
+            "translation_plan": _artifact_path_for(
+                module_id,
+                "translation-plan.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
+        },
+        "summary": {
+            "total_commands": len(entries),
+            "completion_modes": {
+                mode: sum(1 for entry in entries if entry["completion_mode"] == mode)
+                for mode in ["status-gated", "readback-gated", "issue-only"]
+            },
+        },
+        "commands": entries,
+        **_artifact_metadata(profile),
+    }
+
+
+def build_unsafe_obligations(
+    module_path: str | Path | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
+) -> dict:
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     feedback = _load_oracle_feedback(repo, profile["module_id"], artifact_root=artifact_root)
-    abstraction_plan = build_abstraction_plan(module_path, repo_root=repo, artifact_root=artifact_root)
+    abstraction_plan = build_abstraction_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
     module_id = abstraction_plan["module_id"]
     evidence_context = _obligation_evidence_context(profile, abstraction_plan)
 
@@ -1851,10 +2836,16 @@ def build_unsafe_obligations(
                 repo_root=repo,
                 artifact_root=artifact_root,
             ),
+            "command_semantics": _artifact_path_for(
+                module_id,
+                "command-semantics.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
         },
         "obligations": obligations,
         "driver_side_rules": [
-            rule.replace("{driver_rust_path}", profile["driver_rust_path"])
+            rule.replace("{driver_rust_path}", context["driver_rust_path"])
             for rule in profile.get("unsafe", {}).get(
                 "driver_side_rules",
                 [
@@ -1876,20 +2867,40 @@ def build_unsafe_obligations(
 
 
 def build_safety_policy(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
     feedback = _load_oracle_feedback(repo, profile["module_id"], artifact_root=artifact_root)
-    module = _path_from_repo(repo, module_path)
-    module_id = module.stem
-    abstraction_plan = build_abstraction_plan(module_path, repo_root=repo, artifact_root=artifact_root)
-    translation_plan = build_translation_plan(module_path, repo_root=repo, artifact_root=artifact_root)
+    module_id = context["module_id"]
+    abstraction_plan = build_abstraction_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    translation_plan = build_translation_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
 
     allowlist_prefixes = profile.get("safety", {}).get("abstraction_allowlist_prefixes", ["rust/kernel/net/"])
+    implemented_areas = set(abstraction_plan["current_rust_scope"]["implemented_areas"])
     allowlisted_files = [
         entry["implementation_path"]
         for entry in abstraction_plan["abstraction_areas"]
@@ -1900,18 +2911,34 @@ def build_safety_policy(
         for path in allowlisted_files
         if any(path.startswith(prefix) for prefix in allowlist_prefixes)
     ]
-    allowlisted_files = _dedupe_preserve_order(allowlisted_files)
+
+    required_soundness_rules = [
+        {"id": rule_id, **rule}
+        for rule_id, rule in profile["safety"]["soundness_rule_templates"].items()
+        if not rule.get("requires_area") or rule["requires_area"] in implemented_areas
+    ]
+    required_soundness_rules = _apply_feedback_to_soundness_rules(
+        feedback,
+        required_soundness_rules,
+        artifact_type="safety-policy",
+    )
 
     payload = {
         "schema_version": 1,
         "artifact_type": "safety-policy",
         "module_id": module_id,
-        "module_c_path": _rel(repo, module),
+        "module_c_path": context["module_c_path"],
         "driver_rust_path": translation_plan["driver_rust_path"],
         "inputs": {
             "abstraction_plan": _artifact_path_for(
                 module_id,
                 "abstraction-plan.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
+            "external_header_plan": _artifact_path_for(
+                module_id,
+                "external-header-plan.json",
                 repo_root=repo,
                 artifact_root=artifact_root,
             ),
@@ -1946,10 +2973,7 @@ def build_safety_policy(
         "abstraction_policy": {
             "allowlisted_files": allowlisted_files,
             "unsafe_trait_impls_are_proof_sites": True,
-            "required_soundness_rules": [
-                {"id": rule_id, **rule}
-                for rule_id, rule in profile["safety"]["soundness_rule_templates"].items()
-            ],
+            "required_soundness_rules": required_soundness_rules,
         },
         **_artifact_metadata(profile),
     }
@@ -1960,23 +2984,56 @@ def build_safety_policy(
 
 
 def build_soundness_discharge(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    profile = _module_profile(repo, module_path)
-    module = _path_from_repo(repo, module_path)
-    module_id = module.stem
-    safety_policy = build_safety_policy(module_path, repo_root=repo, artifact_root=artifact_root)
-    unsafe_plan = build_unsafe_obligations(module_path, repo_root=repo, artifact_root=artifact_root)
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
+    module_id = context["module_id"]
+    safety_policy = build_safety_policy(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    command_semantics = build_command_semantics(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    command_semantics = build_command_semantics(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    unsafe_plan = build_unsafe_obligations(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
     allowlisted_files = safety_policy["abstraction_policy"]["allowlisted_files"]
 
     obligation_map = {entry["id"]: entry for entry in unsafe_plan["obligations"]}
     proof_sites = []
     for index, site in enumerate(_find_rust_unsafe_sites(repo, allowlisted_files), start=1):
-        linked_obligation_ids = _match_unsafe_obligation_ids(profile, site["file"], site["source_excerpt"])
+        linked_obligation_ids = _match_unsafe_obligation_ids(profile, site)
         preferred_discharge = [
             obligation_map[obligation_id]["preferred_discharge"]
             for obligation_id in linked_obligation_ids
@@ -1989,6 +3046,10 @@ def build_soundness_discharge(
                 "line": site["line"],
                 "unsafe_kind": site["unsafe_kind"],
                 "source_excerpt": site["source_excerpt"],
+                "enclosing_item": site["enclosing_item"],
+                "enclosing_impl_type": site["enclosing_impl_type"],
+                "safety_comment_window": site["safety_comment_window"],
+                "source_window": site["source_window"],
                 "linked_obligation_ids": linked_obligation_ids,
                 "safe_api_surface": Path(site["file"]).stem,
                 "caller_obligations": [
@@ -2082,7 +3143,7 @@ def build_soundness_discharge(
         "schema_version": 1,
         "artifact_type": "soundness-discharge",
         "module_id": module_id,
-        "module_c_path": _rel(repo, module),
+        "module_c_path": context["module_c_path"],
         "driver_rust_path": safety_policy["driver_rust_path"],
         "inputs": {
             "safety_policy": _artifact_path_for(
@@ -2097,6 +3158,12 @@ def build_soundness_discharge(
                 repo_root=repo,
                 artifact_root=artifact_root,
             ),
+            "command_semantics": _artifact_path_for(
+                module_id,
+                "command-semantics.json",
+                repo_root=repo,
+                artifact_root=artifact_root,
+            ),
         },
         "proof_sites": proof_sites,
         "structural_rules": structural_rules,
@@ -2105,34 +3172,78 @@ def build_soundness_discharge(
 
 
 def build_agent_workflow_plan(
-    module_path: str | Path,
+    module_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
+    profile_id: str | None = None,
+    source_tree: str | Path | None = None,
 ) -> dict:
-    repo = _repo_root(repo_root)
-    module = _path_from_repo(repo, module_path)
-    module_id = module.stem
+    context = resolve_module_context(
+        module_path,
+        repo_root=repo_root,
+        profile_id=profile_id,
+        source_tree=source_tree,
+    )
+    repo = context["repo_root"]
+    profile = context["profile"]
+    module_id = context["module_id"]
 
-    abstraction_plan = build_abstraction_plan(module_path, repo_root=repo, artifact_root=artifact_root)
-    translation_plan = build_translation_plan(module_path, repo_root=repo, artifact_root=artifact_root)
-    safety_policy = build_safety_policy(module_path, repo_root=repo, artifact_root=artifact_root)
+    abstraction_plan = build_abstraction_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    translation_plan = build_translation_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    safety_policy = build_safety_policy(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    command_semantics = build_command_semantics(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
+    module_lifecycle_config = module_lifecycle_config_requirements(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
 
     driver_rust_path = translation_plan["driver_rust_path"]
     managed_abstraction_files = safety_policy["abstraction_policy"]["allowlisted_files"]
     managed_files = [driver_rust_path, *managed_abstraction_files]
     driver_object_path = driver_rust_path.removesuffix(".rs") + ".o"
+    driver_module_path = driver_rust_path.removesuffix(".rs") + ".ko"
 
     readiness_blockers = []
     if not translation_plan["readiness"]["ready_for_minimal_driver_codegen"]:
         readiness_blockers.extend(translation_plan["readiness"]["blockers"])
     readiness_blockers = _dedupe_preserve_order(readiness_blockers)
+    gate_selector = f"--profile-id {profile['profile_id']}"
+    if source_tree is not None:
+        gate_selector += f" --source-tree {source_tree}"
 
     return {
         "schema_version": 1,
         "artifact_type": "agent-workflow-plan",
         "module_id": module_id,
-        "module_c_path": _rel(repo, module),
+        "module_c_path": context["module_c_path"],
         "driver_rust_path": driver_rust_path,
         "driver_object_path": driver_object_path,
         "inputs": {
@@ -2166,12 +3277,23 @@ def build_agent_workflow_plan(
                 repo_root=repo,
                 artifact_root=artifact_root,
             ),
+            **(
+                {"module_lifecycle_config": module_lifecycle_config["artifact_path"]}
+                if module_lifecycle_config["enabled"]
+                else {}
+            ),
         },
         "preflight": {
             "ready_for_agent_codegen": not readiness_blockers,
             "blockers": readiness_blockers,
             "required_reads": [
                 _artifact_path_for(module_id, "abstraction-plan.json", repo_root=repo, artifact_root=artifact_root),
+                _artifact_path_for(
+                    module_id,
+                    "external-header-plan.json",
+                    repo_root=repo,
+                    artifact_root=artifact_root,
+                ),
                 _artifact_path_for(module_id, "translation-plan.json", repo_root=repo, artifact_root=artifact_root),
                 _artifact_path_for(module_id, "safety-policy.json", repo_root=repo, artifact_root=artifact_root),
                 _artifact_path_for(
@@ -2186,6 +3308,13 @@ def build_agent_workflow_plan(
                     repo_root=repo,
                     artifact_root=artifact_root,
                 ),
+                _artifact_path_for(
+                    module_id,
+                    "command-semantics.json",
+                    repo_root=repo,
+                    artifact_root=artifact_root,
+                ),
+                *([module_lifecycle_config["artifact_path"]] if module_lifecycle_config["enabled"] else []),
             ],
         },
         "generation_scope": {
@@ -2205,6 +3334,12 @@ def build_agent_workflow_plan(
                 _artifact_path_for(
                     module_id,
                     "soundness-discharge.json",
+                    repo_root=repo,
+                    artifact_root=artifact_root,
+                ),
+                _artifact_path_for(
+                    module_id,
+                    "command-semantics.json",
                     repo_root=repo,
                     artifact_root=artifact_root,
                 ),
@@ -2229,10 +3364,39 @@ def build_agent_workflow_plan(
                 "command": (
                     "python3 scripts/c2saferust/tool_cli.py verify-safety "
                     "--kernel-tree <linux-tree> "
-                    f"--module-path {module_path} "
+                    f"{gate_selector} "
                     f"--output {_artifact_path_for(module_id, 'safety-verdict.json', repo_root=repo, artifact_root=artifact_root)}"
                 ),
                 "pass_condition": "`safety-verdict.json.pass == true`",
+            },
+            *(
+                [
+                    {
+                        "id": "verify-command-semantics",
+                        "stage": "pre-acceptance",
+                        "mandatory": True,
+                        "command": (
+                            "python3 scripts/c2saferust/tool_cli.py verify-command-semantics "
+                            "--kernel-tree <linux-tree> "
+                            f"{gate_selector} "
+                            f"--output {_artifact_path_for(module_id, 'command-semantics-verdict.json', repo_root=repo, artifact_root=artifact_root)}"
+                        ),
+                        "pass_condition": "`command-semantics-verdict.json.pass == true`",
+                    }
+                ]
+                if command_semantics["commands"]
+                else []
+            ),
+            {
+                "id": "rust-toolchain-available",
+                "stage": "pre-smoke",
+                "mandatory": True,
+                "command": (
+                    "make O=/tmp/c2saferust-"
+                    f"{module_id}"
+                    "-build <LLVM/ENV> rustavailable"
+                ),
+                "pass_condition": "`make rustavailable` exits 0 with the same LLVM/libclang environment used for module packaging.",
             },
             {
                 "id": "compile-driver-object",
@@ -2240,6 +3404,13 @@ def build_agent_workflow_plan(
                 "mandatory": True,
                 "command": f"make O=/tmp/c2saferust-{module_id}-build <LLVM/ENV> {driver_object_path}",
                 "pass_condition": f"`make` exits 0 for `{driver_object_path}` after safety gate passes.",
+            },
+            {
+                "id": "package-module",
+                "stage": "pre-smoke",
+                "mandatory": True,
+                "command": f"make O=/tmp/c2saferust-{module_id}-build <LLVM/ENV> {driver_module_path}",
+                "pass_condition": f"`make` exits 0 for `{driver_module_path}` after the lifecycle fragment is merged into the build dir.",
             },
         ],
     }
