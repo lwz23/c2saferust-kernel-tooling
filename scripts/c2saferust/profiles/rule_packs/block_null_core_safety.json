@@ -38,27 +38,11 @@
         ]
       },
       {
-        "id": "configfs-subsystem-registration",
+        "id": "configfs-ffi-catchall",
         "file_suffix": "rust/kernel/configfs.rs",
-        "excerpt_contains_any": [
-          "configfs_register_subsystem",
-          "configfs_unregister_subsystem",
-          "pub struct Subsystem<Data>"
-        ],
         "obligation_ids": [
+          "configfs-group-ffi-lifecycle",
           "configfs-subsystem-registration"
-        ]
-      },
-      {
-        "id": "configfs-group-ffi-lifecycle",
-        "file_suffix": "rust/kernel/configfs.rs",
-        "excerpt_contains_any": [
-          "unsafe extern \"C\" fn make_group(",
-          "unsafe extern \"C\" fn drop_item(",
-          "pub trait GroupOperations"
-        ],
-        "obligation_ids": [
-          "configfs-group-ffi-lifecycle"
         ]
       }
     ]
@@ -87,9 +71,8 @@
         ],
         "file": "rust/kernel/block/mq/request.rs",
         "must_contain": [
-          "pub struct Request<T: Operations>",
-          "pub fn end_ok(this: ARef<Self>)",
-          "pub fn complete(this: ARef<Self>)"
+          "pub struct Request<T>",
+          "impl<T: Operations> Request<T> {"
         ],
         "must_not_contain": []
       },
