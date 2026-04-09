@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-scenario-profile",
+  "scenario_id": "configfs_lifecycle_calibration",
+  "runner_id": "configfs-lifecycle-calibration",
+  "log_prefix": "oracle",
+  "summary_fields": [
+    "module_ready",
+    "create_device",
+    "power_on",
+    "io_smoke",
+    "power_off",
+    "destroy_device"
+  ],
+  "result_success_marker": "[oracle] RESULT=PASS",
+  "runtime_contract": {
+    "requires_root": true,
+    "requires_paths": [
+      "/sys/kernel/config",
+      "/dev"
+    ],
+    "note": "The runner uses the host configfs and device namespace; environment gaps must be reported as `blocked` rather than `pass`."
+  }
+}

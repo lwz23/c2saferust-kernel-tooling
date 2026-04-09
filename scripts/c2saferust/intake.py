@@ -428,7 +428,12 @@ def _collect_rust_net_modules(repo_root: Path) -> list[str]:
 
 
 def _collect_existing_rust_modules(repo_root: Path, relpaths: list[str]) -> list[str]:
-    return sorted(_dedupe_preserve_order([relpath for relpath in relpaths if _file_exists(repo_root, relpath)]))
+    collected: list[str] = []
+    for entry in relpaths:
+        relpath = _implemented_module_path(entry)
+        if relpath and _file_exists(repo_root, relpath):
+            collected.append(relpath)
+    return sorted(_dedupe_preserve_order(collected))
 
 
 def _artifact_root(
@@ -850,6 +855,98 @@ def _extract_private_struct_fields(source_text: str, struct_name: str) -> list[d
                 }
             )
     return fields
+
+
+def _extract_named_structs(source_text: str, struct_names: list[str]) -> list[dict]:
+    structs: list[dict] = []
+    seen: set[str] = set()
+    for struct_name in struct_names:
+        if struct_name in seen:
+            continue
+        seen.add(struct_name)
+        fields = _extract_private_struct_fields(source_text, struct_name)
+        if not fields:
+            continue
+        structs.append(
+            {
+                "name": struct_name,
+                "fields": fields,
+            }
+        )
+    return structs
+
+
+def _extract_pointer_array_entries(source_text: str, array_name: str) -> list[str]:
+    match = re.search(
+        rf"\b{re.escape(array_name)}\b\s*\[\]\s*=\s*\{{(?P<body>.*?)\}};",
+        source_text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        return []
+
+    entries: list[str] = []
+    for entry in re.findall(r"&([A-Za-z_][A-Za-z0-9_]*)", match.group("body")):
+        if entry not in entries:
+            entries.append(entry)
+    return entries
+
+
+def _extract_prefixed_attribute_names(source_text: str, array_name: str, symbol_prefix: str) -> list[str]:
+    names: list[str] = []
+    for entry in _extract_pointer_array_entries(source_text, array_name):
+        if not entry.startswith(symbol_prefix):
+            continue
+        attribute_name = entry.removeprefix(symbol_prefix)
+        if attribute_name and attribute_name not in names:
+            names.append(attribute_name)
+    return names
+
+
+def _extract_macro_invocation_names(source_text: str, macro_name: str) -> list[str]:
+    names: list[str] = []
+    for entry in re.findall(rf"\b{re.escape(macro_name)}\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,", source_text):
+        if entry not in names:
+            names.append(entry)
+    return names
+
+
+def _extract_configfs_attribute_callback_maps(source_text: str) -> tuple[dict[str, str], dict[str, str], list[str], list[str]]:
+    show_map: dict[str, str] = {}
+    store_map: dict[str, str] = {}
+
+    for match in re.finditer(r"\b(memb_group|nullb_device)_([A-Za-z0-9_]+)_(show|store)\s*\(", source_text):
+        prefix, attribute_name, callback_kind = match.groups()
+        callback_name = f"{prefix}_{attribute_name}_{callback_kind}"
+        if callback_kind == "show":
+            show_map.setdefault(attribute_name, callback_name)
+        else:
+            store_map.setdefault(attribute_name, callback_name)
+
+    group_attributes = _extract_prefixed_attribute_names(
+        source_text,
+        "nullb_group_attrs",
+        "memb_group_attr_",
+    )
+    for attribute_name in group_attributes:
+        show_map.setdefault(attribute_name, f"memb_group_{attribute_name}_show")
+
+    device_attributes = _extract_prefixed_attribute_names(
+        source_text,
+        "nullb_device_attrs",
+        "nullb_device_attr_",
+    )
+    for attribute_name in device_attributes:
+        show_map.setdefault(attribute_name, f"nullb_device_{attribute_name}_show")
+        store_map.setdefault(attribute_name, f"nullb_device_{attribute_name}_store")
+
+    for attribute_name in _extract_macro_invocation_names(source_text, "NULLB_DEVICE_ATTR"):
+        show_map.setdefault(attribute_name, f"nullb_device_{attribute_name}_show")
+        store_map.setdefault(attribute_name, f"nullb_device_{attribute_name}_store")
+        if attribute_name not in device_attributes:
+            device_attributes.append(attribute_name)
+
+    return show_map, store_map, group_attributes, device_attributes
 
 
 def _helper_symbols_used(source_text: str, helper_wrapper_candidates: dict[str, dict]) -> list[str]:
@@ -1331,13 +1428,162 @@ def _build_phy_driver_source_inventory(profile: dict, source_text: str, module_i
     return inventory, field_maps
 
 
+def _build_block_null_source_inventory(
+    profile: dict,
+    source_text: str,
+    module_id: str,
+) -> tuple[dict, dict[str, dict[str, str]]]:
+    translation_profile = profile["translation"]
+    blk_mq_initializer_name, blk_mq_body, blk_mq_fields, blk_mq_field_map = _extract_callback_table(
+        source_text, "blk_mq_ops"
+    )
+    configfs_group_initializer_name, configfs_group_body, configfs_group_fields, configfs_group_field_map = (
+        _extract_callback_table(source_text, "configfs_group_operations")
+    )
+    configfs_item_initializer_name, configfs_item_body, configfs_item_fields, configfs_item_field_map = (
+        _extract_callback_table(source_text, "configfs_item_operations")
+    )
+    private_struct_names = _profile_analysis(profile).get(
+        "private_struct_names",
+        ["nullb_device", "nullb", "nullb_queue", "nullb_cmd"],
+    )
+    private_structs = _extract_named_structs(source_text, private_struct_names)
+    configfs_show_map, configfs_store_map, group_attributes, device_attributes = (
+        _extract_configfs_attribute_callback_maps(source_text)
+    )
+
+    field_maps = {
+        "blk_mq_ops": blk_mq_field_map,
+        "configfs_group_operations": configfs_group_field_map,
+        "configfs_item_operations": configfs_item_field_map,
+        "configfs_show": configfs_show_map,
+        "configfs_store": configfs_store_map,
+    }
+
+    callback_calls: dict[str, list[str]] = {}
+    for spec in _translation_callback_specs(translation_profile):
+        symbol = field_maps.get(spec["source"], {}).get(spec["field"])
+        body = _extract_function_body(source_text, symbol) if symbol else None
+        callback_calls[spec["field"]] = _extract_call_sites(body)
+
+    make_group_body = (
+        _extract_function_body(source_text, configfs_group_field_map.get("make_group", ""))
+        if configfs_group_field_map.get("make_group")
+        else None
+    )
+    drop_item_body = (
+        _extract_function_body(source_text, configfs_group_field_map.get("drop_item", ""))
+        if configfs_group_field_map.get("drop_item")
+        else None
+    )
+    queue_rq_body = (
+        _extract_function_body(source_text, blk_mq_field_map.get("queue_rq", ""))
+        if blk_mq_field_map.get("queue_rq")
+        else None
+    )
+    complete_body = (
+        _extract_function_body(source_text, blk_mq_field_map.get("complete", ""))
+        if blk_mq_field_map.get("complete")
+        else None
+    )
+    power_store_body = _extract_function_body(source_text, configfs_store_map.get("power", ""))
+    power_show_body = _extract_function_body(source_text, configfs_show_map.get("power", ""))
+
+    inventory = {
+        "private_struct_fields": private_structs[0]["fields"] if private_structs else [],
+        "private_structs": private_structs,
+        "callback_tables": {
+            "blk_mq_ops": {
+                "name": blk_mq_initializer_name,
+                "fields": blk_mq_fields,
+                "field_map": blk_mq_field_map,
+            },
+            "configfs_group_operations": {
+                "name": configfs_group_initializer_name,
+                "fields": configfs_group_fields,
+                "field_map": configfs_group_field_map,
+            },
+            "configfs_item_operations": {
+                "name": configfs_item_initializer_name,
+                "fields": configfs_item_fields,
+                "field_map": configfs_item_field_map,
+            },
+            "configfs_show": {
+                "name": "configfs_show",
+                "fields": [{"field": key, "value": value} for key, value in configfs_show_map.items()],
+                "field_map": configfs_show_map,
+            },
+            "configfs_store": {
+                "name": "configfs_store",
+                "fields": [{"field": key, "value": value} for key, value in configfs_store_map.items()],
+                "field_map": configfs_store_map,
+            },
+        },
+        "blk_mq_ops": {
+            "name": blk_mq_initializer_name,
+            "fields": blk_mq_fields,
+            "field_map": blk_mq_field_map,
+        },
+        "configfs_group_operations": {
+            "name": configfs_group_initializer_name,
+            "fields": configfs_group_fields,
+            "field_map": configfs_group_field_map,
+        },
+        "configfs_item_operations": {
+            "name": configfs_item_initializer_name,
+            "fields": configfs_item_fields,
+            "field_map": configfs_item_field_map,
+        },
+        "configfs_show": {
+            "name": "configfs_show",
+            "fields": [{"field": key, "value": value} for key, value in configfs_show_map.items()],
+            "field_map": configfs_show_map,
+        },
+        "configfs_store": {
+            "name": "configfs_store",
+            "fields": [{"field": key, "value": value} for key, value in configfs_store_map.items()],
+            "field_map": configfs_store_map,
+        },
+        "setup_field_writes": [],
+        "validate_checks": [],
+        "open_calls": [],
+        "open_tap_assignments": [],
+        "stop_calls": [],
+        "xmit_calls": [],
+        "stats_calls": [],
+        "callback_calls": callback_calls,
+        "configfs": {
+            "group_attributes": group_attributes,
+            "device_attributes": device_attributes,
+            "make_group_calls": _extract_call_sites(make_group_body),
+            "drop_item_calls": _extract_call_sites(drop_item_body),
+            "power_show_calls": _extract_call_sites(power_show_body),
+            "power_store_calls": _extract_call_sites(power_store_body),
+        },
+        "blk_mq": {
+            "queue_rq_calls": _extract_call_sites(queue_rq_body),
+            "complete_calls": _extract_call_sites(complete_body),
+        },
+    }
+    return inventory, field_maps
+
+
 def _build_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
     source_model = _profile_analysis(profile).get("source_model", "link_type_rtnl")
     if source_model == "pci_miscdevice":
         return _build_pci_miscdevice_source_inventory(profile, source_text, module_id)
     if source_model == "phy_driver":
         return _build_phy_driver_source_inventory(profile, source_text, module_id)
+    if source_model == "block_null":
+        return _build_block_null_source_inventory(profile, source_text, module_id)
     return _build_link_type_source_inventory(profile, source_text, module_id)
+
+
+def _driver_build_targets(context: dict, kbuild_plan: dict) -> tuple[str, str]:
+    module_dir = Path(context["module_dir"])
+    object_name = Path(kbuild_plan["suggested_rust_object"]).name
+    object_path = module_dir / object_name
+    return str(object_path), str(object_path.with_suffix(".ko"))
 
 
 def build_kbuild_plan(
@@ -1451,6 +1697,15 @@ def build_kbuild_plan(
         }
         suggested_object = f"{module_id}_rust.o"
 
+    reference_pattern = kbuild_profile.get(
+        "reference_pattern",
+        {
+            "kconfig_path": "drivers/net/phy/Kconfig",
+            "makefile_path": "drivers/net/phy/Makefile",
+            "rust_driver_path": "drivers/net/phy/ax88796b_rust.rs",
+        },
+    )
+
     return {
         "schema_version": 1,
         "artifact_type": "kbuild-plan",
@@ -1464,11 +1719,7 @@ def build_kbuild_plan(
         "suggested_rust_config_symbol": rust_symbol,
         "suggested_rust_object": suggested_object,
         "current_state": current_state,
-        "reference_pattern": {
-            "kconfig_path": "drivers/net/phy/Kconfig",
-            "makefile_path": "drivers/net/phy/Makefile",
-            "rust_driver_path": "drivers/net/phy/ax88796b_rust.rs",
-        },
+        "reference_pattern": reference_pattern,
         "suggested_kconfig_snippet": suggested_kconfig,
         "suggested_makefile_snippet": suggested_makefile,
         "next_action": next_action,
@@ -2725,6 +2976,20 @@ def build_translation_plan(
         "driver_policy": translation_profile["driver_policy"],
         **_artifact_metadata(profile),
     }
+    for key in [
+        "callback_inference",
+        "bit_strategy",
+        "driver_layout",
+        "error_handling_policy",
+        "evidence_paths",
+        "implementation_order",
+        "driver_shape",
+        "state_mapping",
+        "abstraction_gap_handling",
+        "runtime_expectation",
+    ]:
+        if key in translation_profile:
+            payload[key] = translation_profile[key]
     notes = _feedback_notes(feedback, "translation-plan")
     if notes:
         payload["oracle_feedback_notes"] = notes
@@ -3224,12 +3489,18 @@ def build_agent_workflow_plan(
         profile_id=profile["profile_id"],
         source_tree=source_tree,
     )
+    kbuild_plan = build_kbuild_plan(
+        module_path,
+        repo_root=repo,
+        artifact_root=artifact_root,
+        profile_id=profile["profile_id"],
+        source_tree=source_tree,
+    )
 
     driver_rust_path = translation_plan["driver_rust_path"]
     managed_abstraction_files = safety_policy["abstraction_policy"]["allowlisted_files"]
     managed_files = [driver_rust_path, *managed_abstraction_files]
-    driver_object_path = driver_rust_path.removesuffix(".rs") + ".o"
-    driver_module_path = driver_rust_path.removesuffix(".rs") + ".ko"
+    driver_object_path, driver_module_path = _driver_build_targets(context, kbuild_plan)
 
     readiness_blockers = []
     if not translation_plan["readiness"]["ready_for_minimal_driver_codegen"]:
@@ -3246,6 +3517,7 @@ def build_agent_workflow_plan(
         "module_c_path": context["module_c_path"],
         "driver_rust_path": driver_rust_path,
         "driver_object_path": driver_object_path,
+        "driver_module_path": driver_module_path,
         "inputs": {
             "abstraction_plan": _artifact_path_for(
                 module_id,
@@ -3413,4 +3685,5 @@ def build_agent_workflow_plan(
                 "pass_condition": f"`make` exits 0 for `{driver_module_path}` after the lifecycle fragment is merged into the build dir.",
             },
         ],
+        **({"agent_workflow": profile["agent_workflow"]} if profile.get("agent_workflow") else {}),
     }

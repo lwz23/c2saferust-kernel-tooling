@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_type": "c2saferust-benchmark-profile",
   "benchmark_id": "rnull-calibration",
+  "module_profile_id": "rnull",
   "module_id": "rnull",
   "module_path": "drivers/block/null_blk/main.c",
   "driver_rust_path": "drivers/block/rnull/rnull.rs",

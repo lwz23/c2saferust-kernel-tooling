@@ -3097,7 +3097,588 @@ def _run_android_goldfish_oracle(
             )
 
 
+def _module_loaded(module_name: str, *, proc_modules_path: Path, sys_module_root: Path) -> bool:
+    candidate_names = {
+        module_name,
+        module_name.replace("-", "_"),
+        module_name.replace("_", "-"),
+    }
+    for candidate in candidate_names:
+        if (sys_module_root / candidate).exists():
+            return True
+
+    if proc_modules_path.exists():
+        for line in proc_modules_path.read_text().splitlines():
+            fields = line.split()
+            if fields and fields[0] in candidate_names:
+                return True
+    return False
+
+
+def _resolve_module_artifact_path(
+    *,
+    repo_root: Path,
+    build_dir: str | Path | None,
+    scenario_inputs: dict,
+    runner_context: dict,
+) -> Path | None:
+    explicit = runner_context.get("module_file") or scenario_inputs.get("module_file")
+    if explicit:
+        return _expand_path(explicit)
+
+    relpath = scenario_inputs.get("module_file_relpath")
+    if not relpath:
+        return None
+
+    if build_dir is not None:
+        build_candidate = Path(build_dir) / relpath
+        if build_candidate.exists():
+            return build_candidate
+
+    repo_candidate = repo_root / relpath
+    if repo_candidate.exists():
+        return repo_candidate
+    return repo_candidate
+
+
+def _write_text_path(path: Path, text: str) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _wait_for_path(path: Path, *, timeout_sec: int, want_exists: bool = True) -> bool:
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if path.exists() == want_exists:
+            return True
+        time.sleep(0.1)
+    return path.exists() == want_exists
+
+
+def _parse_bool_text(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "y", "yes", "true", "on"}
+
+
+def _run_configfs_lifecycle_calibration(
+    *,
+    repo_root: Path,
+    module_path: str | Path | None,
+    module_profile: dict,
+    scenario: dict,
+    translation_plan: dict,
+    scenario_inputs: dict,
+    qemu_log_output: str | Path | None,
+    artifact_root: str | Path | None,
+    build_dir: str | Path | None,
+    make_llvm: str | None,
+    timeout_sec: int,
+    runner_context: dict,
+) -> dict:
+    del module_path, module_profile, scenario, qemu_log_output, artifact_root, make_llvm
+
+    runner_id = "configfs-lifecycle-calibration"
+    require_root = bool(runner_context.get("require_root", True))
+    skip_module_load = bool(runner_context.get("skip_module_load", False))
+    cleanup_module = bool(runner_context.get("cleanup_module", True))
+    configfs_root = _expand_path(runner_context.get("configfs_root") or scenario_inputs.get("configfs_root")) or Path(
+        "/sys/kernel/config"
+    )
+    dev_root = _expand_path(runner_context.get("dev_root") or scenario_inputs.get("dev_root")) or Path("/dev")
+    sys_module_root = _expand_path(runner_context.get("sys_module_root")) or Path("/sys/module")
+    proc_modules_path = _expand_path(runner_context.get("proc_modules_path")) or Path("/proc/modules")
+    module_name = str(runner_context.get("module_name") or scenario_inputs.get("module_name") or "rnull_mod")
+    configfs_subsystem = str(
+        runner_context.get("configfs_subsystem") or scenario_inputs.get("configfs_subsystem") or "rnull"
+    )
+    subsystem_root = configfs_root / configfs_subsystem
+    module_file = _resolve_module_artifact_path(
+        repo_root=repo_root,
+        build_dir=build_dir,
+        scenario_inputs=scenario_inputs,
+        runner_context=runner_context,
+    )
+
+    format_context = {
+        **scenario_inputs,
+        "module_id": translation_plan["module_id"],
+    }
+    device_name = str(
+        runner_context.get("device_name")
+        or scenario_inputs.get("device_name")
+        or scenario_inputs.get("device_name_template", "c2saferust-{module_id}")
+    ).format(**format_context)
+    if (subsystem_root / device_name).exists():
+        device_name = f"{device_name}-{os.getpid()}"
+    device_dir = subsystem_root / device_name
+    device_node = (dev_root / device_name).resolve()
+
+    block_size = int(runner_context.get("device_block_size") or scenario_inputs.get("device_block_size", 4096))
+    capacity_mib = int(runner_context.get("device_size_mib") or scenario_inputs.get("device_size_mib", 64))
+    rotational = "1" if _parse_bool_text(runner_context.get("device_rotational", scenario_inputs.get("device_rotational"))) else "0"
+    irq_mode = str(runner_context.get("device_irq_mode") or scenario_inputs.get("device_irq_mode", "1"))
+    io_size = int(runner_context.get("io_size") or scenario_inputs.get("io_size", block_size))
+
+    power_attr = str(scenario_inputs.get("power_attribute", "power"))
+    blocksize_attr = str(scenario_inputs.get("blocksize_attribute", "blocksize"))
+    rotational_attr = str(scenario_inputs.get("rotational_attribute", "rotational"))
+    size_attr = str(scenario_inputs.get("size_attribute", "size"))
+    irqmode_attr = str(scenario_inputs.get("irqmode_attribute", "irqmode"))
+
+    environment = {
+        "requires_root": require_root,
+        "euid": os.geteuid(),
+        "module_name": module_name,
+        "module_file": str(module_file) if module_file is not None else None,
+        "configfs_root": str(configfs_root),
+        "configfs_subsystem": configfs_subsystem,
+        "dev_root": str(dev_root),
+        "device_name": device_name,
+        "device_node": str(device_node),
+        "build_dir": str(build_dir) if build_dir is not None else None,
+    }
+    steps: list[dict] = []
+    commands: list[str] = []
+    loaded_by_runner = False
+
+    if require_root and os.geteuid() != 0:
+        steps.append(
+            _environment_missing_step(
+                "check-root",
+                [f"runner requires root privileges; current euid={os.geteuid()}"],
+            )
+        )
+        return _blocked_runner_payload(
+            runner_id,
+            blocker_kind="insufficient-privilege",
+            blockers=["root privileges are required for configfs calibration."],
+            steps=steps,
+            evidence_tier="env_blocked",
+            environment=environment,
+        )
+
+    if not configfs_root.exists():
+        steps.append(
+            _environment_missing_step(
+                "check-configfs-root",
+                [f"configfs root `{configfs_root}` does not exist"],
+            )
+        )
+        return _blocked_runner_payload(
+            runner_id,
+            blocker_kind="configfs-unavailable",
+            blockers=[f"Missing configfs root `{configfs_root}`."],
+            steps=steps,
+            evidence_tier="env_blocked",
+            environment=environment,
+        )
+
+    module_ready_initially = _module_loaded(
+        module_name,
+        proc_modules_path=proc_modules_path,
+        sys_module_root=sys_module_root,
+    )
+    steps.append(
+        {
+            "step_id": "detect-module",
+            "status": "pass" if module_ready_initially else "pending",
+            "details": [
+                f"module_name={module_name}",
+                f"module_loaded={module_ready_initially}",
+            ],
+        }
+    )
+
+    if not subsystem_root.exists() and not module_ready_initially:
+        if skip_module_load:
+            steps.append(
+                _environment_missing_step(
+                    "load-module",
+                    ["runner configured to skip module load and configfs subsystem is absent"],
+                )
+            )
+            return _blocked_runner_payload(
+                runner_id,
+                blocker_kind="configfs-subsystem-missing",
+                blockers=[
+                    f"Configfs subsystem `{configfs_subsystem}` is absent and module loading was skipped."
+                ],
+                steps=steps,
+                evidence_tier="env_blocked",
+                environment=environment,
+            )
+
+        insmod_path = _resolve_tool_path("insmod")
+        if insmod_path is None:
+            steps.append(
+                _environment_missing_step(
+                    "load-module",
+                    ["`insmod` is not available in PATH"],
+                )
+            )
+            return _blocked_runner_payload(
+                runner_id,
+                blocker_kind="tool-missing",
+                blockers=["`insmod` is required to load the calibration module."],
+                steps=steps,
+                evidence_tier="env_blocked",
+                environment=environment,
+            )
+        if module_file is None or not module_file.exists():
+            steps.append(
+                _environment_missing_step(
+                    "load-module",
+                    [f"module artifact `{module_file}` is missing"],
+                )
+            )
+            return _blocked_runner_payload(
+                runner_id,
+                blocker_kind="module-artifact-missing",
+                blockers=["The packaged module artifact is missing; run the package gate first."],
+                steps=steps,
+                evidence_tier="env_blocked",
+                environment=environment,
+            )
+
+        commands.append(f"{insmod_path} {module_file}")
+        insmod_result = _run_command([insmod_path, str(module_file)], timeout_sec=timeout_sec)
+        steps.append(
+            {
+                "step_id": "load-module",
+                "status": "pass" if insmod_result.returncode == 0 else "blocked",
+                "details": (
+                    insmod_result.stdout.splitlines()[-10:]
+                    or insmod_result.stderr.splitlines()[-10:]
+                    or ["insmod completed with no output"]
+                ),
+            }
+        )
+        if insmod_result.returncode != 0:
+            return _blocked_runner_payload(
+                runner_id,
+                blocker_kind="module-load-failed",
+                blockers=[f"Failed to load `{module_file}` via `insmod`."],
+                steps=steps,
+                evidence_tier="env_blocked",
+                environment=environment,
+            )
+        loaded_by_runner = True
+
+    if not subsystem_root.exists() and not _wait_for_path(subsystem_root, timeout_sec=min(timeout_sec, 5)):
+        steps.append(
+            _environment_missing_step(
+                "locate-configfs-subsystem",
+                [f"subsystem path `{subsystem_root}` did not appear"],
+            )
+        )
+        if loaded_by_runner and cleanup_module:
+            rmmod_path = _resolve_tool_path("rmmod")
+            if rmmod_path is not None:
+                _run_command([rmmod_path, module_name], timeout_sec=min(timeout_sec, 10))
+        return _blocked_runner_payload(
+            runner_id,
+            blocker_kind="configfs-subsystem-missing",
+            blockers=[f"Configfs subsystem `{configfs_subsystem}` is not available after module load."],
+            steps=steps,
+            evidence_tier="env_blocked",
+            environment=environment,
+        )
+
+    steps.append(
+        {
+            "step_id": "locate-configfs-subsystem",
+            "status": "pass",
+            "details": [f"subsystem_root={subsystem_root}"],
+        }
+    )
+
+    try:
+        device_dir.mkdir()
+        steps.append(
+            {
+                "step_id": "create-device",
+                "status": "pass",
+                "details": [f"created `{device_dir}`"],
+            }
+        )
+
+        _write_text_path(device_dir / blocksize_attr, f"{block_size}\n")
+        _write_text_path(device_dir / rotational_attr, f"{rotational}\n")
+        _write_text_path(device_dir / size_attr, f"{capacity_mib}\n")
+        _write_text_path(device_dir / irqmode_attr, f"{irq_mode}\n")
+        steps.append(
+            {
+                "step_id": "configure-device",
+                "status": "pass",
+                "details": [
+                    f"{blocksize_attr}={block_size}",
+                    f"{rotational_attr}={rotational}",
+                    f"{size_attr}={capacity_mib}",
+                    f"{irqmode_attr}={irq_mode}",
+                ],
+            }
+        )
+
+        _write_text_path(device_dir / power_attr, "1\n")
+        steps.append(
+            {
+                "step_id": "power-on",
+                "status": "pass",
+                "details": [f"{power_attr}=1"],
+            }
+        )
+
+        if not _wait_for_path(device_node, timeout_sec=min(timeout_sec, 5)):
+            steps.append(
+                _environment_missing_step(
+                    "wait-device-node",
+                    [f"device node `{device_node}` did not appear"],
+                )
+            )
+            return _blocked_runner_payload(
+                runner_id,
+                blocker_kind="device-node-missing",
+                blockers=[f"Device node `{device_node}` did not appear after power-on."],
+                steps=steps,
+                evidence_tier="env_blocked",
+                environment=environment,
+            )
+
+        steps.append(
+            {
+                "step_id": "wait-device-node",
+                "status": "pass",
+                "details": [f"device_node={device_node}"],
+            }
+        )
+
+        payload = b"\0" * io_size
+        fd = os.open(device_node, os.O_RDWR)
+        try:
+            written = os.pwrite(fd, payload, 0)
+            read_back = os.pread(fd, io_size, 0)
+        finally:
+            os.close(fd)
+        io_ok = written == len(payload) and len(read_back) == io_size
+        steps.append(
+            {
+                "step_id": "io-smoke",
+                "status": "pass" if io_ok else "fail",
+                "details": [
+                    f"written={written}",
+                    f"read={len(read_back)}",
+                ],
+            }
+        )
+        if not io_ok:
+            return {
+                "runner": {
+                    "id": runner_id,
+                    "status": "fail",
+                    "commands": commands,
+                },
+                "pass": False,
+                "ready_for_oracle": False,
+                "blocked": False,
+                "evidence_tier": "device_present",
+                "smoke_summary": {
+                    "result": "FAIL",
+                    "module_ready": 1,
+                    "create_device": 1,
+                    "power_on": 1,
+                    "io_smoke": 0,
+                    "power_off": 0,
+                    "destroy_device": 0,
+                },
+                "steps": steps,
+                "environment": {
+                    **environment,
+                    "module_loaded_by_runner": loaded_by_runner,
+                },
+            }
+
+        _write_text_path(device_dir / power_attr, "0\n")
+        steps.append(
+            {
+                "step_id": "power-off",
+                "status": "pass",
+                "details": [f"{power_attr}=0"],
+            }
+        )
+
+        if not _wait_for_path(device_node, timeout_sec=min(timeout_sec, 5), want_exists=False):
+            steps.append(
+                {
+                    "step_id": "wait-device-node-removal",
+                    "status": "fail",
+                    "details": [f"device node `{device_node}` is still present"],
+                }
+            )
+            return {
+                "runner": {
+                    "id": runner_id,
+                    "status": "fail",
+                    "commands": commands,
+                },
+                "pass": False,
+                "ready_for_oracle": False,
+                "blocked": False,
+                "evidence_tier": "device_present",
+                "smoke_summary": {
+                    "result": "FAIL",
+                    "module_ready": 1,
+                    "create_device": 1,
+                    "power_on": 1,
+                    "io_smoke": 1,
+                    "power_off": 0,
+                    "destroy_device": 0,
+                },
+                "steps": steps,
+                "environment": {
+                    **environment,
+                    "module_loaded_by_runner": loaded_by_runner,
+                },
+            }
+
+        device_dir.rmdir()
+        steps.append(
+            {
+                "step_id": "destroy-device",
+                "status": "pass",
+                "details": [f"removed `{device_dir}`"],
+            }
+        )
+    except PermissionError as exc:
+        steps.append(
+            _environment_missing_step(
+                "configfs-operation",
+                [str(exc)],
+            )
+        )
+        return _blocked_runner_payload(
+            runner_id,
+            blocker_kind="insufficient-privilege",
+            blockers=["Configfs calibration requires write access to configfs and the device node."],
+            steps=steps,
+            evidence_tier="env_blocked",
+            environment=environment,
+        )
+    except FileNotFoundError as exc:
+        steps.append(
+            _environment_missing_step(
+                "configfs-operation",
+                [str(exc)],
+            )
+        )
+        return _blocked_runner_payload(
+            runner_id,
+            blocker_kind="configfs-layout-mismatch",
+            blockers=[str(exc)],
+            steps=steps,
+            evidence_tier="env_blocked",
+            environment=environment,
+        )
+    except OSError as exc:
+        steps.append(
+            {
+                "step_id": "configfs-operation",
+                "status": "fail",
+                "details": [str(exc)],
+            }
+        )
+        return {
+            "runner": {
+                "id": runner_id,
+                "status": "fail",
+                "commands": commands,
+            },
+            "pass": False,
+            "ready_for_oracle": False,
+            "blocked": False,
+            "evidence_tier": "device_present",
+            "smoke_summary": {
+                "result": "FAIL",
+                "module_ready": 1,
+                "create_device": 0,
+                "power_on": 0,
+                "io_smoke": 0,
+                "power_off": 0,
+                "destroy_device": 0,
+            },
+            "steps": steps,
+            "environment": {
+                **environment,
+                "module_loaded_by_runner": loaded_by_runner,
+            },
+        }
+    finally:
+        if device_dir.exists():
+            try:
+                if (device_dir / power_attr).exists():
+                    _write_text_path(device_dir / power_attr, "0\n")
+            except Exception:
+                pass
+            try:
+                device_dir.rmdir()
+            except Exception:
+                pass
+
+        if loaded_by_runner and cleanup_module:
+            rmmod_path = _resolve_tool_path("rmmod")
+            if rmmod_path is not None:
+                commands.append(f"{rmmod_path} {module_name}")
+                rmmod_result = _run_command([rmmod_path, module_name], timeout_sec=min(timeout_sec, 10))
+                steps.append(
+                    {
+                        "step_id": "module-cleanup",
+                        "status": "pass" if rmmod_result.returncode == 0 else "fail",
+                        "details": (
+                            rmmod_result.stdout.splitlines()[-10:]
+                            or rmmod_result.stderr.splitlines()[-10:]
+                            or ["rmmod completed with no output"]
+                        ),
+                    }
+                )
+            else:
+                steps.append(
+                    _environment_missing_step(
+                        "module-cleanup",
+                        ["`rmmod` is not available in PATH"],
+                    )
+                )
+
+    return {
+        "runner": {
+            "id": runner_id,
+            "status": "pass",
+            "commands": commands,
+        },
+        "pass": True,
+        "ready_for_oracle": True,
+        "blocked": False,
+        "evidence_tier": "behavior_validated",
+        "smoke_summary": {
+            "result": "PASS",
+            "module_ready": 1,
+            "create_device": 1,
+            "power_on": 1,
+            "io_smoke": 1,
+            "power_off": 1,
+            "destroy_device": 1,
+        },
+        "steps": steps,
+        "environment": {
+            **environment,
+            "module_loaded_by_runner": loaded_by_runner,
+        },
+    }
+
+
 register_runner("qemu-scenario", _run_qemu_scenario)
 register_runner("qemu-module-lifecycle", _run_qemu_module_lifecycle)
 register_runner("android-goldfish-oracle", _run_android_goldfish_oracle)
 register_runner("android-emulator-goldfish", _run_android_goldfish_oracle)
+register_runner("configfs-lifecycle-calibration", _run_configfs_lifecycle_calibration)

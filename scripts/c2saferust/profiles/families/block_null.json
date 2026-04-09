@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-family-profile",
+  "family_id": "block-null",
+  "template_id": "block_null_rules",
+  "helper_wrapper_candidates": {},
+  "direct_ffi_candidates": {},
+  "default_binding_header_decision": {
+    "action": "handled_by_rust_abstraction",
+    "reason": "The block calibration workflow should stay within the in-tree Rust block and configfs abstractions rather than pulling blk-mq/configfs internals into bindgen.",
+    "required_symbols": [],
+    "mvp_blocking": false
+  },
+  "default_external_header_decision": {
+    "action": "manual_review",
+    "reason": "Private block-driver headers need an explicit landing or omission decision before codegen claims are made.",
+    "required_symbols": [],
+    "mvp_blocking": true
+  },
+  "bindings_header_decisions": {
+    "linux/module.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "Module registration should stay behind `module!` instead of bindgen-visible module macros.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/moduleparam.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "The calibration subset does not model `null_blk` module parameters; the Rust calibration target is configfs-driven.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/fs.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "The configfs attribute flow should stay behind `kernel::configfs` instead of direct VFS/configfs structs in driver code.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/init.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "Initialization stays behind `module!` and typed Rust module init code.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    },
+    "linux/sched.h": {
+      "action": "handled_by_rust_abstraction",
+      "reason": "Scheduler and throttling details are outside the calibration subset and should not be imported into the driver surface.",
+      "required_symbols": [],
+      "mvp_blocking": false
+    }
+  },
+  "implemented_rust_modules": {
+    "mvp": {
+      "block-core": {
+        "path": "rust/kernel/block.rs",
+        "must_contain": [
+          "pub mod mq;",
+          "pub const SECTOR_SHIFT: u32 = bindings::SECTOR_SHIFT;"
+        ]
+      },
+      "block-mq-core": {
+        "path": "rust/kernel/block/mq.rs",
+        "must_contain": [
+          "pub mod gen_disk;",
+          "pub use operations::Operations;",
+          "pub use request::Request;",
+          "pub use tag_set::TagSet;"
+        ]
+      },
+      "block-mq-ops": {
+        "path": "rust/kernel/block/mq/operations.rs",
+        "must_contain": [
+          "pub trait Operations: Sized {",
+          "fn queue_rq(",
+          "fn complete(rq: ARef<Request<Self>>);",
+          "unsafe extern \"C\" fn queue_rq_callback(",
+          "unsafe extern \"C\" fn complete_callback("
+        ]
+      },
+      "block-gen-disk": {
+        "path": "rust/kernel/block/mq/gen_disk.rs",
+        "must_contain": [
+          "pub struct GenDiskBuilder {",
+          "pub fn build<T: Operations>(",
+          "pub struct GenDisk<T: Operations> {"
+        ]
+      },
+      "block-request": {
+        "path": "rust/kernel/block/mq/request.rs",
+        "must_contain": [
+          "pub struct Request<T: Operations>",
+          "pub fn end_ok(this: ARef<Self>)",
+          "pub fn complete(this: ARef<Self>)"
+        ]
+      },
+      "block-tag-set": {
+        "path": "rust/kernel/block/mq/tag_set.rs",
+        "must_contain": [
+          "pub struct TagSet<T: Operations> {",
+          "pub fn new("
+        ]
+      },
+      "configfs": {
+        "path": "rust/kernel/configfs.rs",
+        "must_contain": [
+          "pub struct Subsystem<Data> {",
+          "bindings::configfs_register_subsystem",
+          "bindings::configfs_unregister_subsystem",
+          "pub trait GroupOperations {",
+          "pub trait AttributeOperations<const ID: u64 = 0> {"
+        ]
+      }
+    },
+    "post_mvp": {}
+  },
+  "abstraction_requirements": {
+    "block-core": {
+      "patterns": [
+        "SECTOR_SHIFT",
+        "blk_rq_sectors",
+        "blk_rq_pos"
+      ],
+      "reason": "The Rust block driver needs typed block constants and block-layer units instead of open-coded sector math.",
+      "required_surface": [
+        "A typed `kernel::block` surface exposing sector constants used by the Rust driver.",
+        "A Rust-visible block namespace that owns the blk-mq submodules used by the calibration target."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/block.rs"
+      ]
+    },
+    "block-mq-core": {
+      "patterns": [
+        "struct blk_mq_ops",
+        "null_queue_rq",
+        "null_complete_rq"
+      ],
+      "reason": "The calibration target depends on the blk-mq driver trait and its request-facing surface.",
+      "required_surface": [
+        "A typed `block::mq::Operations` trait that owns callback registration.",
+        "Request and queue-data surfaces that keep request ownership and completion logic inside Rust abstractions."
+      ],
+      "deferred_surface": [
+        "`queue_rqs`, timeouts, poll queues, and advanced blk-mq hooks beyond the calibration subset."
+      ],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/block/mq.rs",
+        "rust/kernel/block/mq/operations.rs",
+        "rust/kernel/block/mq/request.rs"
+      ]
+    },
+    "block-gen-disk": {
+      "patterns": [
+        "logical_block_size",
+        "physical_block_size",
+        "disk_name"
+      ],
+      "reason": "The Rust calibration target builds block devices through `GenDiskBuilder` instead of manually wiring `gendisk` state.",
+      "required_surface": [
+        "A `GenDiskBuilder` surface for capacity, block size, rotational policy, and queue-data-backed disk creation."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/block/mq/gen_disk.rs"
+      ]
+    },
+    "block-tag-set": {
+      "patterns": [
+        "struct blk_mq_tag_set",
+        "tag_set",
+        "blk_mq_alloc_tag_set"
+      ],
+      "reason": "The calibration target needs an owned tag-set abstraction whose lifetime remains coupled to the disk.",
+      "required_surface": [
+        "An owned `TagSet` abstraction that keeps blk-mq request bookkeeping and teardown in Rust."
+      ],
+      "deferred_surface": [],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/block/mq/tag_set.rs"
+      ]
+    },
+    "configfs": {
+      "patterns": [
+        "struct configfs_group_operations",
+        "struct configfs_item_operations",
+        "configfs_register_subsystem",
+        "nullb_group_make_group",
+        "nullb_group_drop_item"
+      ],
+      "reason": "The calibration target is configfs-driven and needs typed subsystem/group/attribute lifecycle ownership.",
+      "required_surface": [
+        "A typed `configfs::Subsystem` registration surface.",
+        "Typed `GroupOperations` and `AttributeOperations` traits for create/configure/power/destroy flows.",
+        "Configfs child lifetime management that keeps raw pointer conversion inside the abstraction."
+      ],
+      "deferred_surface": [
+        "Default groups, configfs items, and symlink support that the current Rust configfs layer does not yet expose."
+      ],
+      "depends_on_artifacts": [],
+      "preferred_files": [
+        "rust/kernel/configfs.rs"
+      ]
+    }
+  },
+  "translation": {
+    "deferred_callback_default": {
+      "status": "deferred",
+      "rust_surface": null,
+      "body_plan": [
+        "Keep this callback outside the current block/configfs calibration subset until the corresponding abstraction contract is explicitly promoted."
+      ]
+    }
+  },
+  "analysis": {
+    "source_model": "block_null",
+    "private_struct_names": [
+      "nullb_device",
+      "nullb",
+      "nullb_queue",
+      "nullb_cmd"
+    ]
+  },
+  "oracle": {
+    "runner": "configfs-lifecycle-calibration"
+  }
+}

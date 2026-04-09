@@ -503,6 +503,453 @@ static struct pci_driver goldfish_address_space_driver = {
         )
         return source_root
 
+    def _build_rnull_sample_root(self, root: Path) -> None:
+        self._build_sample_root(root)
+
+        (root / "drivers" / "block" / "null_blk").mkdir(parents=True, exist_ok=True)
+        (root / "drivers" / "block" / "rnull").mkdir(parents=True, exist_ok=True)
+        (root / "drivers" / "block" / "Kconfig").write_text(
+            "# SPDX-License-Identifier: GPL-2.0\n"
+            'source "drivers/block/null_blk/Kconfig"\n'
+            'source "drivers/block/rnull/Kconfig"\n'
+        )
+        (root / "drivers" / "block" / "Makefile").write_text(
+            "# SPDX-License-Identifier: GPL-2.0\n"
+            "obj-$(CONFIG_BLK_DEV_NULL_BLK)\t+= null_blk/\n"
+            "obj-$(CONFIG_BLK_DEV_RUST_NULL) += rnull/\n"
+        )
+        (root / "drivers" / "block" / "null_blk" / "Kconfig").write_text(
+            "config BLK_DEV_NULL_BLK\n"
+            '\ttristate "Null block driver"\n'
+            "\n"
+        )
+        (root / "drivers" / "block" / "null_blk" / "Makefile").write_text(
+            "obj-$(CONFIG_BLK_DEV_NULL_BLK) += main.o\n"
+        )
+        (root / "drivers" / "block" / "null_blk" / "null_blk.h").write_text("// private header\n")
+        (root / "drivers" / "block" / "null_blk" / "main.c").write_text(
+            """// SPDX-License-Identifier: GPL-2.0-only
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/sched.h>
+#include <linux/fs.h>
+#include <linux/init.h>
+#include "null_blk.h"
+
+struct nullb_device {
+\tbool power;
+\tunsigned int blocksize;
+\tbool rotational;
+\tunsigned long size;
+\tunsigned int irqmode;
+};
+
+struct nullb {
+\tstruct nullb_device *dev;
+\tchar disk_name[32];
+};
+
+struct nullb_queue {
+\tstruct nullb_device *dev;
+};
+
+struct nullb_cmd {
+\tint error;
+};
+
+static struct blk_mq_tag_set tag_set;
+
+static int null_add_dev(struct nullb *nullb)
+{
+\t/* logical_block_size physical_block_size disk_name SECTOR_SHIFT */
+\treturn 0;
+}
+
+static void null_del_dev(struct nullb *nullb)
+{
+\t(void)nullb;
+}
+
+static ssize_t nullb_device_power_show(struct config_item *item, char *page)
+{
+\treturn 0;
+}
+
+static ssize_t nullb_device_power_store(struct config_item *item, const char *page, size_t count)
+{
+\tnull_add_dev((struct nullb *)0);
+\tnull_del_dev((struct nullb *)0);
+\treturn count;
+}
+
+static ssize_t memb_group_features_show(struct config_item *item, char *page)
+{
+\treturn 0;
+}
+
+#define NULLB_DEVICE_ATTR(_name, _type, _validate)
+NULLB_DEVICE_ATTR(size, ulong, NULL);
+NULLB_DEVICE_ATTR(blocksize, uint, NULL);
+NULLB_DEVICE_ATTR(rotational, bool, NULL);
+NULLB_DEVICE_ATTR(irqmode, uint, NULL);
+
+static struct configfs_attribute *nullb_device_attrs[] = {
+\t&nullb_device_attr_power,
+\t&nullb_device_attr_blocksize,
+\t&nullb_device_attr_rotational,
+\t&nullb_device_attr_size,
+\t&nullb_device_attr_irqmode,
+\tNULL,
+};
+
+static struct configfs_attribute *nullb_group_attrs[] = {
+\t&memb_group_attr_features,
+\tNULL,
+};
+
+static void nullb_device_release(struct config_item *item)
+{
+\t(void)item;
+}
+
+static const struct configfs_item_operations nullb_device_ops = {
+\t.release = nullb_device_release,
+};
+
+static struct config_group *nullb_group_make_group(struct config_group *group, const char *name)
+{
+\tconfig_group_init_type_name((struct config_group *)0, name, (struct config_item_type *)0);
+\treturn group;
+}
+
+static void nullb_group_drop_item(struct config_group *group, struct config_item *item)
+{
+\tconfig_item_put(item);
+}
+
+static const struct configfs_group_operations nullb_group_ops = {
+\t.make_group = nullb_group_make_group,
+\t.drop_item = nullb_group_drop_item,
+};
+
+static blk_status_t null_queue_rq(struct blk_mq_hw_ctx *hctx, const struct blk_mq_queue_data *bd)
+{
+\tstruct request *rq = bd->rq;
+\tblk_rq_sectors(rq);
+\tblk_rq_pos(rq);
+\tblk_mq_start_request(rq);
+\tblk_mq_complete_request(rq);
+\treturn BLK_STS_OK;
+}
+
+static void null_complete_rq(struct request *rq)
+{
+\tblk_mq_end_request(rq, BLK_STS_OK);
+}
+
+static const struct blk_mq_ops null_mq_ops = {
+\t.queue_rq = null_queue_rq,
+\t.complete = null_complete_rq,
+};
+"""
+        )
+        (root / "drivers" / "block" / "rnull" / "Kconfig").write_text(
+            "# SPDX-License-Identifier: GPL-2.0\n"
+            "config BLK_DEV_RUST_NULL\n"
+            '\ttristate "Rust null block driver (Experimental)"\n'
+            "\tdepends on RUST && CONFIGFS_FS\n"
+        )
+        (root / "drivers" / "block" / "rnull" / "Makefile").write_text(
+            "obj-$(CONFIG_BLK_DEV_RUST_NULL) += rnull_mod.o\n"
+            "rnull_mod-y := rnull.o\n"
+        )
+        (root / "drivers" / "block" / "rnull" / "rnull.rs").write_text(
+            """#![forbid(unsafe_code)]
+
+mod configfs;
+
+use configfs::IRQMode;
+use kernel::{
+    block::{
+        self,
+        mq::{
+            self,
+            gen_disk::{self, GenDisk},
+            Operations, TagSet,
+        },
+    },
+    prelude::*,
+    sync::{aref::ARef, Arc},
+};
+
+module! {
+    type: NullBlkModule,
+    name: "rnull_mod",
+    authors: ["Example"],
+    description: "Rust null block driver",
+    license: "GPL v2",
+}
+
+#[pin_data]
+struct NullBlkModule {
+    #[pin]
+    configfs_subsystem: kernel::configfs::Subsystem<configfs::Config>,
+}
+
+impl kernel::InPlaceModule for NullBlkModule {
+    fn init(_module: &'static ThisModule) -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {
+            configfs_subsystem <- configfs::subsystem(),
+        })
+    }
+}
+
+struct NullBlkDevice;
+
+struct QueueData {
+    irq_mode: IRQMode,
+}
+
+impl NullBlkDevice {
+    fn new(
+        name: &CStr,
+        block_size: u32,
+        rotational: bool,
+        capacity_mib: u64,
+        irq_mode: IRQMode,
+    ) -> Result<GenDisk<Self>> {
+        let tagset = Arc::pin_init(TagSet::new(1, 256, 1), GFP_KERNEL)?;
+        let queue_data = Box::new(QueueData { irq_mode }, GFP_KERNEL)?;
+        gen_disk::GenDiskBuilder::new()
+            .capacity_sectors(capacity_mib << (20 - block::SECTOR_SHIFT))
+            .logical_block_size(block_size)?
+            .physical_block_size(block_size)?
+            .rotational(rotational)
+            .build(fmt!("{}", name.to_str()?), tagset, queue_data)
+    }
+}
+
+#[vtable]
+impl Operations for NullBlkDevice {
+    type QueueData = KBox<QueueData>;
+
+    fn queue_rq(queue_data: &QueueData, rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
+        match queue_data.irq_mode {
+            IRQMode::None => mq::Request::end_ok(rq)
+                .map_err(|_e| kernel::error::code::EIO)
+                .expect("request completion should succeed"),
+            IRQMode::Soft => mq::Request::complete(rq),
+        }
+        Ok(())
+    }
+
+    fn commit_rqs(_queue_data: &QueueData) {}
+
+    fn complete(rq: ARef<mq::Request<Self>>) {
+        mq::Request::end_ok(rq)
+            .map_err(|_e| kernel::error::code::EIO)
+            .expect("request completion should succeed");
+    }
+}
+"""
+        )
+        (root / "drivers" / "block" / "rnull" / "configfs.rs").write_text(
+            """use super::{NullBlkDevice, THIS_MODULE};
+use kernel::{
+    block::mq::gen_disk::{GenDisk, GenDiskBuilder},
+    configfs::{self, AttributeOperations},
+    configfs_attrs,
+    fmt::{self, Write as _},
+    new_mutex,
+    page::PAGE_SIZE,
+    prelude::*,
+    str::{kstrtobool_bytes, CString},
+    sync::Mutex,
+};
+
+pub(crate) fn subsystem() -> impl PinInit<kernel::configfs::Subsystem<Config>, Error> {
+    let item_type = configfs_attrs! {
+        container: configfs::Subsystem<Config>,
+        data: Config,
+        child: DeviceConfig,
+        attributes: [
+            features: 0,
+        ],
+    };
+    kernel::configfs::Subsystem::new(c"rnull", item_type, try_pin_init!(Config {}))
+}
+
+#[pin_data]
+pub(crate) struct Config {}
+
+#[vtable]
+impl AttributeOperations<0> for Config {
+    type Data = Config;
+
+    fn show(_this: &Config, page: &mut [u8; PAGE_SIZE]) -> Result<usize> {
+        let mut writer = kernel::str::Formatter::new(page);
+        writer.write_str("blocksize,size,rotational,irqmode\\n")?;
+        Ok(writer.bytes_written())
+    }
+}
+
+#[vtable]
+impl configfs::GroupOperations for Config {
+    type Child = DeviceConfig;
+
+    fn make_group(&self, name: &CStr) -> Result<impl PinInit<configfs::Group<DeviceConfig>, Error>> {
+        let item_type = configfs_attrs! {
+            container: configfs::Group<DeviceConfig>,
+            data: DeviceConfig,
+            attributes: [
+                power: 0,
+                blocksize: 1,
+                rotational: 2,
+                size: 3,
+                irqmode: 4,
+            ],
+        };
+
+        Ok(configfs::Group::new(
+            name.try_into()?,
+            item_type,
+            try_pin_init!(DeviceConfig {
+                data <- new_mutex!(DeviceConfigInner {
+                    powered: false,
+                    block_size: 4096,
+                    rotational: false,
+                    disk: None,
+                    capacity_mib: 4096,
+                    irq_mode: IRQMode::None,
+                    name: name.try_into()?,
+                }),
+            }),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum IRQMode {
+    None,
+    Soft,
+}
+
+impl TryFrom<u8> for IRQMode {
+    type Error = kernel::error::Error;
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Soft),
+            _ => Err(EINVAL),
+        }
+    }
+}
+
+#[pin_data]
+pub(crate) struct DeviceConfig {
+    #[pin]
+    data: Mutex<DeviceConfigInner>,
+}
+
+#[pin_data]
+struct DeviceConfigInner {
+    powered: bool,
+    name: CString,
+    block_size: u32,
+    rotational: bool,
+    capacity_mib: u64,
+    irq_mode: IRQMode,
+    disk: Option<GenDisk<NullBlkDevice>>,
+}
+"""
+        )
+        (root / "rust" / "kernel" / "block").mkdir(parents=True, exist_ok=True)
+        (root / "rust" / "kernel" / "block" / "mq").mkdir(parents=True, exist_ok=True)
+        (root / "rust" / "kernel" / "block.rs").write_text(
+            "pub mod mq;\n"
+            "pub const SECTOR_SHIFT: u32 = bindings::SECTOR_SHIFT;\n"
+        )
+        (root / "rust" / "kernel" / "block" / "mq.rs").write_text(
+            "pub mod gen_disk;\n"
+            "mod operations;\n"
+            "mod request;\n"
+            "mod tag_set;\n"
+            "pub use operations::Operations;\n"
+            "pub use request::Request;\n"
+            "pub use tag_set::TagSet;\n"
+        )
+        (root / "rust" / "kernel" / "block" / "mq" / "operations.rs").write_text(
+            "pub trait Operations: Sized {\n"
+            "    fn queue_rq(\n"
+            "        queue_data: (),\n"
+            "        rq: ARef<Request<Self>>,\n"
+            "        is_last: bool,\n"
+            "    ) -> Result;\n"
+            "    fn complete(rq: ARef<Request<Self>>);\n"
+            "}\n"
+            "// unsafe extern \"C\" fn queue_rq_callback(\n"
+            "// unsafe extern \"C\" fn complete_callback(\n"
+            "// let ret = T::queue_rq(\n"
+            "// T::complete(aref);\n"
+        )
+        (root / "rust" / "kernel" / "block" / "mq" / "gen_disk.rs").write_text(
+            "pub struct GenDiskBuilder {\n"
+            "    _private: (),\n"
+            "}\n"
+            "impl GenDiskBuilder {\n"
+            "    pub fn build<T: Operations>(\n"
+            "        self,\n"
+            "        name: String,\n"
+            "        tagset: Arc<TagSet<T>>,\n"
+            "        queue_data: T::QueueData,\n"
+            "    ) -> Result<GenDisk<T>> {\n"
+            "        let _ = (name, tagset, queue_data);\n"
+            "        Err(EINVAL)\n"
+            "    }\n"
+            "}\n"
+            "pub struct GenDisk<T: Operations> {\n"
+            "    _private: core::marker::PhantomData<T>,\n"
+            "}\n"
+        )
+        (root / "rust" / "kernel" / "block" / "mq" / "request.rs").write_text(
+            "pub struct Request<T: Operations> {\n"
+            "    _private: core::marker::PhantomData<T>,\n"
+            "}\n"
+            "impl<T: Operations> Request<T> {\n"
+            "    pub fn end_ok(this: ARef<Self>) { let _ = this; }\n"
+            "    pub fn complete(this: ARef<Self>) { let _ = this; }\n"
+            "}\n"
+        )
+        (root / "rust" / "kernel" / "block" / "mq" / "tag_set.rs").write_text(
+            "pub struct TagSet<T: Operations> {\n"
+            "    _private: core::marker::PhantomData<T>,\n"
+            "}\n"
+            "impl<T: Operations> TagSet<T> {\n"
+            "    pub fn new(_nr_hw_queues: u32, _queue_depth: u32, _numa_node: u32) -> Self {\n"
+            "        Self { _private: core::marker::PhantomData }\n"
+            "    }\n"
+            "}\n"
+            "impl<T: Operations> PinnedDrop for TagSet<T> {\n"
+            "    fn drop(self: Pin<&mut Self>) {}\n"
+            "}\n"
+        )
+        (root / "rust" / "kernel" / "configfs.rs").write_text(
+            "pub struct Subsystem<Data> {\n"
+            "    _private: core::marker::PhantomData<Data>,\n"
+            "}\n"
+            "// bindings::configfs_register_subsystem\n"
+            "// bindings::configfs_unregister_subsystem\n"
+            "// unsafe extern \"C\" fn make_group(\n"
+            "// unsafe extern \"C\" fn drop_item(\n"
+            "pub trait GroupOperations {\n"
+            "    type Child: 'static;\n"
+            "}\n"
+            "pub trait AttributeOperations<const ID: u64 = 0> {\n"
+            "    fn show(&self) {}\n"
+            "    fn store(&self) {}\n"
+            "}\n"
+        )
+
     def _apply_realized_mvp_state(self, root: Path) -> None:
         (root / "drivers" / "net" / "Kconfig").write_text(
             'config NLMON\n'
@@ -1281,6 +1728,133 @@ const GOLDFISH_AS_INVALID_HANDLE: u32 = u32::MAX;
         self.assertIn("qemu-module-lifecycle", oracle_runners.available_runner_ids())
         self.assertIn("android-goldfish-oracle", oracle_runners.available_runner_ids())
         self.assertIn("android-emulator-goldfish", oracle_runners.available_runner_ids())
+        self.assertIn("configfs-lifecycle-calibration", oracle_runners.available_runner_ids())
+
+    def test_refresh_artifacts_supports_rnull_profile(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_rnull_sample_root(root)
+            output_dir = root / "Documentation" / "rust" / "c2saferust" / "rnull"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(self.SCRIPT_PATH),
+                    "refresh-artifacts",
+                    "--repo-root",
+                    str(root),
+                    "--profile-id",
+                    "rnull",
+                    "--output-dir",
+                    str(output_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["module_id"], "rnull")
+            self.assertIn(
+                "Documentation/rust/c2saferust/rnull/agent-workflow-plan.json",
+                payload["generated_artifacts"],
+            )
+
+            abstraction = json.loads((output_dir / "abstraction-plan.json").read_text())
+            workflow_plan = json.loads((output_dir / "agent-workflow-plan.json").read_text())
+            self.assertEqual(
+                abstraction["source_inventory"]["blk_mq_ops"]["field_map"]["queue_rq"],
+                "null_queue_rq",
+            )
+            self.assertIn("blocksize", abstraction["source_inventory"]["configfs"]["device_attributes"])
+            self.assertEqual(workflow_plan["driver_object_path"], "drivers/block/rnull/rnull_mod.o")
+            self.assertEqual(workflow_plan["driver_module_path"], "drivers/block/rnull/rnull_mod.ko")
+
+    def test_configfs_lifecycle_runner_reports_blocked_when_subsystem_missing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_rnull_sample_root(root)
+
+            context = intake.resolve_module_context(repo_root=root, profile_id="rnull")
+            translation = intake.build_translation_plan(repo_root=root, profile_id="rnull")
+            scenario = smoke.profiles.load_scenario_profile(context["profile"]["oracle"]["scenario_id"])
+            scenario_inputs = smoke._render_scenario_inputs(
+                context["module_path"],
+                context["profile"],
+                translation,
+            )
+
+            configfs_root = root / "fake-configfs"
+            dev_root = root / "fake-dev"
+            sys_module_root = root / "fake-sys-module"
+            proc_modules_path = root / "fake-proc-modules"
+            configfs_root.mkdir(parents=True, exist_ok=True)
+            dev_root.mkdir(parents=True, exist_ok=True)
+            sys_module_root.mkdir(parents=True, exist_ok=True)
+            proc_modules_path.write_text("")
+
+            payload = oracle_runners.run_runner(
+                "configfs-lifecycle-calibration",
+                repo_root=root,
+                module_path=context["module_path"],
+                module_profile=context["profile"],
+                scenario=scenario,
+                translation_plan=translation,
+                scenario_inputs=scenario_inputs,
+                qemu_log_output=None,
+                artifact_root=None,
+                build_dir=None,
+                make_llvm=None,
+                timeout_sec=5,
+                runner_context={
+                    "require_root": False,
+                    "skip_module_load": True,
+                    "configfs_root": configfs_root,
+                    "dev_root": dev_root,
+                    "sys_module_root": sys_module_root,
+                    "proc_modules_path": proc_modules_path,
+                },
+            )
+
+            self.assertTrue(payload["blocked"])
+            self.assertEqual(payload["blocker_kind"], "configfs-subsystem-missing")
+            self.assertEqual(payload["runner"]["id"], "configfs-lifecycle-calibration")
+            self.assertEqual(payload["environment"]["configfs_root"], str(configfs_root))
+
+    def test_bootstrap_benchmark_supports_rnull_calibration_profile(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_rnull_sample_root(root)
+            benchmark_dir = root / "Documentation" / "rust" / "c2saferust" / "benchmarks" / "rnull-calibration"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(self.SCRIPT_PATH),
+                    "bootstrap-benchmark",
+                    "--repo-root",
+                    str(root),
+                    "--benchmark-id",
+                    "rnull-calibration",
+                    "--output-dir",
+                    str(benchmark_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["benchmark_id"], "rnull-calibration")
+
+            manifest = json.loads((benchmark_dir / "module-manifest.json").read_text())
+            summary = json.loads((benchmark_dir / "validator-ready-summary.json").read_text())
+            self.assertEqual(manifest["profile_id"], "rnull")
+            self.assertEqual(manifest["driver_rust_path"], "drivers/block/rnull/rnull.rs")
+            self.assertEqual(summary["runtime_assessment"]["primary_runner"], "configfs-lifecycle-calibration")
+            self.assertTrue(summary["runtime_assessment"]["primary_runner_available"])
 
     def test_goldfish_external_source_context_resolves_profile(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3305,6 +3879,7 @@ const GOLDFISH_AS_INVALID_HANDLE: u32 = u32::MAX;
                 "Documentation/rust/c2saferust/ax88796b_blind_strict_v2/module-lifecycle.config",
                 workflow_payload["preflight"]["required_reads"],
             )
+
 
     def test_bootstrap_benchmark_supports_ax88796b_ground_truth_strict_profile(self):
         with tempfile.TemporaryDirectory() as temp_dir:

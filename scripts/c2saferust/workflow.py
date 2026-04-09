@@ -445,14 +445,15 @@ def _run_compile_gate(
     make_llvm: str | None = None,
 ) -> dict:
     repo = _repo_root(repo_root)
-    translation_plan = intake.build_translation_plan(
+    workflow_plan = intake.build_agent_workflow_plan(
         module_path,
         repo_root=repo,
+        artifact_root=artifact_root,
         profile_id=profile_id,
         source_tree=source_tree,
     )
-    module_id = translation_plan["module_id"]
-    target = translation_plan["driver_rust_path"].removesuffix(".rs") + ".o"
+    module_id = workflow_plan["module_id"]
+    target = workflow_plan["driver_object_path"]
     preparation = _prepare_module_lifecycle_build(
         module_path,
         repo_root=repo,
@@ -745,7 +746,7 @@ def gate_agent_candidate(
                 else:
                     package_gate = _run_target_gate(
                         "package-module",
-                        workflow_plan["driver_rust_path"].removesuffix(".rs") + ".ko",
+                        workflow_plan["driver_module_path"],
                         repo_root=repo,
                         build_dir_path=build_dir_path,
                         build_dir_source=preparation["build_dir_source"],

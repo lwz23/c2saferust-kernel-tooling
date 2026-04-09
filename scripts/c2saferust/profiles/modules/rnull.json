@@ -1,0 +1,359 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-module-profile",
+  "profile_id": "rnull",
+  "family_id": "block-null",
+  "module_path": "drivers/block/null_blk/main.c",
+  "module_id": "rnull",
+  "artifact_dir": "Documentation/rust/c2saferust/rnull",
+  "driver_rust_path": "drivers/block/rnull/rnull.rs",
+  "landing": {
+    "module_dir": "drivers/block/rnull",
+    "driver_rust_path": "drivers/block/rnull/rnull.rs",
+    "kconfig_path": "drivers/block/rnull/Kconfig",
+    "makefile_path": "drivers/block/rnull/Makefile"
+  },
+  "kbuild": {
+    "mode": "add-new-driver",
+    "driver_config_symbol": "BLK_DEV_RUST_NULL",
+    "driver_object": "rnull_mod.o",
+    "driver_prompt": "Rust null block driver (Experimental)",
+    "driver_depends_on": "RUST && CONFIGFS_FS",
+    "driver_help": [
+      "Build the Rust implementation of the null block driver.",
+      "This target is currently used as a calibration-only Rust block-driver benchmark."
+    ],
+    "reference_pattern": {
+      "kconfig_path": "drivers/block/rnull/Kconfig",
+      "makefile_path": "drivers/block/rnull/Makefile",
+      "rust_driver_path": "drivers/block/rnull/rnull.rs"
+    }
+  },
+  "build_validation": {
+    "module_lifecycle_config": {
+      "artifact_filename": "module-lifecycle.config",
+      "required_config_lines": [
+        "CONFIG_MODULES=y",
+        "CONFIG_BLOCK=y",
+        "CONFIG_RUST=y",
+        "CONFIG_CONFIGFS_FS=y",
+        "CONFIG_BLK_DEV_RUST_NULL=m"
+      ]
+    }
+  },
+  "external_header_decisions": {
+    "null_blk.h": {
+      "action": "ignore_private_header",
+      "reason": "The calibration workflow targets the Rust block/configfs abstractions rather than porting the private `null_blk.h` helper surface into bindgen or translated Rust.",
+      "required_symbols": [],
+      "mvp_blocking": false,
+      "rust_strategy": "Model the required behavior through the block-mq/configfs abstraction plan and the official `rnull` surface instead of landing this private header."
+    }
+  },
+  "translation": {
+    "goal": "Calibrate the toolchain around `drivers/block/null_blk/main.c -> drivers/block/rnull/rnull.rs` by describing the official Rust `rnull` module through strict block/configfs artifacts before any blind-first migration attempt.",
+    "abstraction_goal": "Constrain the current `rnull` phase to the official block-mq plus configfs subset so the tool can validate blk-mq request flow, configfs-powered device lifecycle, and Kbuild/runtime contracts without overstating blind migration support.",
+    "mvp_scope": {
+      "target_command": "make ... drivers/block/rnull/rnull_mod.o && make ... drivers/block/rnull/rnull_mod.ko",
+      "note": "This profile is calibration-only: it should validate the official Rust driver shape and the tool contracts for create/destroy plus minimal I/O smoke before any blind-first `null_blk` experiment."
+    },
+    "required_callback_fields": [
+      {
+        "source": "blk_mq_ops",
+        "field": "queue_rq"
+      },
+      {
+        "source": "blk_mq_ops",
+        "field": "complete"
+      },
+      {
+        "source": "configfs_group_operations",
+        "field": "make_group"
+      },
+      {
+        "source": "configfs_show",
+        "field": "features"
+      },
+      {
+        "source": "configfs_show",
+        "field": "power"
+      },
+      {
+        "source": "configfs_store",
+        "field": "power"
+      },
+      {
+        "source": "configfs_show",
+        "field": "blocksize"
+      },
+      {
+        "source": "configfs_store",
+        "field": "blocksize"
+      },
+      {
+        "source": "configfs_show",
+        "field": "rotational"
+      },
+      {
+        "source": "configfs_store",
+        "field": "rotational"
+      },
+      {
+        "source": "configfs_show",
+        "field": "size"
+      },
+      {
+        "source": "configfs_store",
+        "field": "size"
+      },
+      {
+        "source": "configfs_show",
+        "field": "irqmode"
+      },
+      {
+        "source": "configfs_store",
+        "field": "irqmode"
+      }
+    ],
+    "deferred_callback_fields": [
+      {
+        "source": "configfs_group_operations",
+        "field": "drop_item"
+      },
+      {
+        "source": "configfs_item_operations",
+        "field": "release"
+      }
+    ],
+    "callback_roles": {
+      "blk_mq_ops.queue_rq": {
+        "status": "required",
+        "rust_surface": "impl Operations for NullBlkDevice::queue_rq",
+        "body_plan": [
+          "Map the queue callback to `block::mq::Operations::queue_rq` using `QueueData` as the only per-queue state.",
+          "Preserve the calibrated split between synchronous completion (`Request::end_ok`) and softirq completion (`Request::complete`) without exposing raw request ownership to driver code."
+        ]
+      },
+      "blk_mq_ops.complete": {
+        "status": "required",
+        "rust_surface": "impl Operations for NullBlkDevice::complete",
+        "body_plan": [
+          "Finish asynchronously completed requests through the typed `Request` API only.",
+          "Keep the expectation that the final request reference is unique at completion inside the abstraction-owned request type."
+        ]
+      },
+      "configfs_group_operations.make_group": {
+        "status": "required",
+        "rust_surface": "impl configfs::GroupOperations for Config::make_group",
+        "body_plan": [
+          "Create the per-device configfs group through `configfs::Group::new` and owned Rust state.",
+          "Seed the calibration subset fields (`power`, `block_size`, `rotational`, `capacity_mib`, `irq_mode`, `disk`) inside an owned mutex-backed Rust struct."
+        ]
+      },
+      "configfs_show.features": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<0> for Config::show",
+        "body_plan": [
+          "Report the supported configfs calibration attributes as a static text list through a typed page writer."
+        ]
+      },
+      "configfs_show.power": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<0> for DeviceConfig::show",
+        "body_plan": [
+          "Render the current powered state from owned Rust state without exposing raw configfs data pointers."
+        ]
+      },
+      "configfs_store.power": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<0> for DeviceConfig::store",
+        "body_plan": [
+          "Translate power-on into `NullBlkDevice::new(...)` and store the resulting `GenDisk` inside owned Rust state.",
+          "Translate power-off into `guard.disk.take()` plus state update, keeping teardown best-effort and owned."
+        ]
+      },
+      "configfs_show.blocksize": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<1> for DeviceConfig::show",
+        "body_plan": [
+          "Expose the configured block size through a typed formatter."
+        ]
+      },
+      "configfs_store.blocksize": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<1> for DeviceConfig::store",
+        "body_plan": [
+          "Reject writes while powered, validate block size through `GenDiskBuilder::validate_block_size`, and then update owned Rust state."
+        ]
+      },
+      "configfs_show.rotational": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<2> for DeviceConfig::show",
+        "body_plan": [
+          "Expose the current rotational flag through a typed formatter."
+        ]
+      },
+      "configfs_store.rotational": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<2> for DeviceConfig::store",
+        "body_plan": [
+          "Reject writes while powered and update the typed boolean configuration through `kstrtobool_bytes`."
+        ]
+      },
+      "configfs_show.size": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<3> for DeviceConfig::show",
+        "body_plan": [
+          "Expose the configured capacity in MiB through a typed formatter."
+        ]
+      },
+      "configfs_store.size": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<3> for DeviceConfig::store",
+        "body_plan": [
+          "Reject writes while powered and parse the configured capacity into owned Rust state."
+        ]
+      },
+      "configfs_show.irqmode": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<4> for DeviceConfig::show",
+        "body_plan": [
+          "Expose the current IRQ mode through the typed Rust enum formatter."
+        ]
+      },
+      "configfs_store.irqmode": {
+        "status": "required",
+        "rust_surface": "impl AttributeOperations<4> for DeviceConfig::store",
+        "body_plan": [
+          "Reject writes while powered, parse the mode as an integer, and convert it through `IRQMode::try_from`."
+        ]
+      }
+    },
+    "additional_allowed_driver_surfaces": [
+      "kernel::configfs::Group",
+      "kernel::str::Formatter",
+      "kernel::error::code::EIO"
+    ],
+    "additional_forbidden_driver_calls": [
+      "bindings::blk_mq_requeue_request",
+      "bindings::config_item_put",
+      "bindings::configfs_add_default_group"
+    ],
+    "module_shell": {
+      "module_macro_required": true,
+      "preferred_driver_type": "NullBlkDevice",
+      "preferred_module_macro": "module!",
+      "device_table": [],
+      "drivers": [
+        "NullBlkModule",
+        "NullBlkDevice",
+        "configfs::Config"
+      ],
+      "module_name": "rnull_mod"
+    },
+    "private_state": {
+      "type_name": "DeviceConfigInner",
+      "layout": "Configfs-owned device state guarded by a Rust mutex, with the created disk owned as `Option<GenDisk<NullBlkDevice>>`.",
+      "fields": [
+        {
+          "name": "powered",
+          "rust_type": "bool",
+          "role": "Track whether the configfs device is currently powered on."
+        },
+        {
+          "name": "name",
+          "rust_type": "CString",
+          "role": "Persist the configfs device name for disk creation."
+        },
+        {
+          "name": "block_size",
+          "rust_type": "u32",
+          "role": "Own the configured logical/physical block size."
+        },
+        {
+          "name": "rotational",
+          "rust_type": "bool",
+          "role": "Own the rotational queue property."
+        },
+        {
+          "name": "capacity_mib",
+          "rust_type": "u64",
+          "role": "Own the configured capacity."
+        },
+        {
+          "name": "irq_mode",
+          "rust_type": "IRQMode",
+          "role": "Own the calibrated IRQ completion mode."
+        },
+        {
+          "name": "disk",
+          "rust_type": "Option<GenDisk<NullBlkDevice>>",
+          "role": "Own the live disk while powered on and drop it during power-off or group teardown."
+        }
+      ],
+      "note": "The calibration subset keeps per-device state entirely on the configfs side; advanced null_blk runtime state remains outside this phase."
+    },
+    "driver_shape": {
+      "driver_traits": [
+        "impl Operations for NullBlkDevice",
+        "impl configfs::GroupOperations for Config",
+        "impl AttributeOperations<0> for Config",
+        "impl AttributeOperations<0..=4> for DeviceConfig"
+      ],
+      "module_registration": "module!",
+      "module_struct": "NullBlkModule",
+      "queue_data_type": "KBox<QueueData>"
+    },
+    "state_mapping": {
+      "c_private_state": {
+        "struct_name": "nullb_device",
+        "fields": [
+          "power",
+          "blocksize",
+          "rotational",
+          "size",
+          "irqmode"
+        ]
+      },
+      "rust_policy_state": {
+        "type_name": "DeviceConfigInner",
+        "fields": [
+          "powered",
+          "block_size",
+          "rotational",
+          "capacity_mib",
+          "irq_mode",
+          "disk"
+        ]
+      }
+    },
+    "runtime_expectation": {
+      "validation_mode": "configfs-lifecycle-calibration",
+      "scope": "create/destroy plus minimal I/O smoke only",
+      "claim": "calibration-only"
+    }
+  },
+  "oracle": {
+    "runner_id": "configfs-lifecycle-calibration",
+    "scenario_id": "configfs_lifecycle_calibration",
+    "scenario_inputs": {
+      "module_name": "rnull_mod",
+      "module_file_relpath_template": "drivers/block/rnull/rnull_mod.ko",
+      "module_file_name_template": "rnull_mod.ko",
+      "configfs_subsystem": "rnull",
+      "device_name_template": "c2saferust-{module_id}",
+      "configfs_root": "/sys/kernel/config",
+      "dev_root": "/dev",
+      "power_attribute": "power",
+      "blocksize_attribute": "blocksize",
+      "rotational_attribute": "rotational",
+      "size_attribute": "size",
+      "irqmode_attribute": "irqmode",
+      "device_block_size": "4096",
+      "device_size_mib": "64",
+      "device_rotational": "0",
+      "device_irq_mode": "1",
+      "io_size": "4096"
+    }
+  }
+}

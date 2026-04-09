@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-template-profile",
+  "template_id": "block_null_rules",
+  "rule_pack_ids": [
+    "block_null_core_safety"
+  ],
+  "planning": {
+    "bindings_patch_style_constraints": [
+      "Treat `null_blk` private headers and blk-mq/configfs internals as abstraction-first surfaces rather than bindgen-first surfaces.",
+      "Keep the calibration workflow anchored on the in-tree Rust block/configfs abstractions before any blind-first block-driver experiment."
+    ]
+  },
+  "analysis": {
+    "source_model": "block_null"
+  },
+  "translation": {
+    "allowed_driver_surfaces": [
+      "kernel::block::{self, mq::{self, Operations, Request, TagSet}}",
+      "kernel::block::mq::gen_disk::{self, GenDisk, GenDiskBuilder}",
+      "kernel::configfs::{self, AttributeOperations, GroupOperations, Subsystem}",
+      "kernel::configfs_attrs",
+      "kernel::fmt::{self, Write as _}",
+      "kernel::new_mutex",
+      "kernel::page::PAGE_SIZE",
+      "kernel::prelude::*",
+      "kernel::str::{CString, kstrtobool_bytes}",
+      "kernel::sync::{Arc, Mutex, aref::ARef}",
+      "module!"
+    ],
+    "forbidden_driver_calls": [
+      "bindings::blk_mq_start_request",
+      "bindings::blk_mq_complete_request",
+      "bindings::blk_mq_end_request",
+      "bindings::configfs_register_subsystem",
+      "bindings::configfs_unregister_subsystem",
+      "bindings::config_group_init_type_name",
+      "bindings::config_item_put",
+      "bindings::add_disk",
+      "bindings::del_gendisk"
+    ],
+    "driver_policy": {
+      "driver_zero_unsafe": true,
+      "driver_zero_bindings": true,
+      "driver_zero_extern_c": true
+    },
+    "driver_generation_rules": [
+      "Treat `rnull` as a calibration target first: the plan should validate the official Rust implementation and the tool contracts before any blind-first block-driver run.",
+      "Keep request submission/completion, tag-set lifetime, configfs registration, and configfs child lifetime inside the approved block/configfs abstractions only.",
+      "Do not model `null_blk` module parameters, fault injection, timers, queue_rqs, or memory-backed/zoned behaviors as if they were already covered by the calibration subset."
+    ]
+  },
+  "safety": {
+    "driver_policy": {
+      "zero_unsafe": true,
+      "zero_bindings": true,
+      "zero_extern_c": true,
+      "required_crate_attributes": [
+        "#![forbid(unsafe_code)]"
+      ],
+      "forbidden_tokens": [
+        "unsafe",
+        "bindings::",
+        "extern \"C\"",
+        "*mut ",
+        "*const "
+      ]
+    },
+    "abstraction_allowlist_prefixes": [
+      "rust/kernel/block.rs",
+      "rust/kernel/block/",
+      "rust/kernel/configfs.rs"
+    ]
+  },
+  "unsafe": {
+    "driver_side_rules": [
+      "Do not use `unsafe` in driver code, including `unsafe impl`, `unsafe fn`, or `unsafe {}` blocks.",
+      "Do not reference `bindings::*` directly from driver code; keep blk-mq and configfs interaction inside the approved abstractions.",
+      "Do not hand-roll request completion, configfs registration, or gendisk/tag-set lifetime management in `{driver_rust_path}`.",
+      "Keep the calibration subset restricted to queue/completion plus configfs create/power/configure/destroy behavior until a newer artifact explicitly broadens the scope."
+    ]
+  }
+}

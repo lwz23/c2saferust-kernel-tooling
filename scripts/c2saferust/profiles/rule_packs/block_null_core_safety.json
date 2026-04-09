@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-rule-pack",
+  "rule_pack_id": "block_null_core_safety",
+  "analysis": {
+    "evidence_context_paths": {
+      "required_callbacks": "mvp_scope.required_callbacks",
+      "queue_rq_calls": "source_inventory.blk_mq.queue_rq_calls",
+      "power_store_calls": "source_inventory.configfs.power_store_calls"
+    },
+    "unsafe_site_matchers": [
+      {
+        "id": "block-mq-request-callback-bridge",
+        "file_suffix": "rust/kernel/block/mq/operations.rs",
+        "obligation_ids": [
+          "block-mq-request-callback-bridge"
+        ]
+      },
+      {
+        "id": "block-request-completion-lifecycle",
+        "file_suffix": "rust/kernel/block/mq/request.rs",
+        "obligation_ids": [
+          "block-request-completion-lifecycle"
+        ]
+      },
+      {
+        "id": "block-tag-set-lifetime",
+        "file_suffix": "rust/kernel/block/mq/tag_set.rs",
+        "obligation_ids": [
+          "block-tag-set-lifetime"
+        ]
+      },
+      {
+        "id": "block-gen-disk-queue-data-lifetime",
+        "file_suffix": "rust/kernel/block/mq/gen_disk.rs",
+        "obligation_ids": [
+          "block-gen-disk-queue-data-lifetime"
+        ]
+      },
+      {
+        "id": "configfs-subsystem-registration",
+        "file_suffix": "rust/kernel/configfs.rs",
+        "excerpt_contains_any": [
+          "configfs_register_subsystem",
+          "configfs_unregister_subsystem",
+          "pub struct Subsystem<Data>"
+        ],
+        "obligation_ids": [
+          "configfs-subsystem-registration"
+        ]
+      },
+      {
+        "id": "configfs-group-ffi-lifecycle",
+        "file_suffix": "rust/kernel/configfs.rs",
+        "excerpt_contains_any": [
+          "unsafe extern \"C\" fn make_group(",
+          "unsafe extern \"C\" fn drop_item(",
+          "pub trait GroupOperations"
+        ],
+        "obligation_ids": [
+          "configfs-group-ffi-lifecycle"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "soundness_rule_templates": {
+      "block-mq-operations-surface": {
+        "linked_obligation_ids": [
+          "block-mq-request-callback-bridge"
+        ],
+        "file": "rust/kernel/block/mq/operations.rs",
+        "must_contain": [
+          "pub trait Operations: Sized {",
+          "fn queue_rq(",
+          "fn complete(rq: ARef<Request<Self>>);",
+          "unsafe extern \"C\" fn queue_rq_callback(",
+          "unsafe extern \"C\" fn complete_callback(",
+          "let ret = T::queue_rq(",
+          "T::complete(aref);"
+        ],
+        "must_not_contain": []
+      },
+      "block-request-completion-surface": {
+        "linked_obligation_ids": [
+          "block-request-completion-lifecycle"
+        ],
+        "file": "rust/kernel/block/mq/request.rs",
+        "must_contain": [
+          "pub struct Request<T: Operations>",
+          "pub fn end_ok(this: ARef<Self>)",
+          "pub fn complete(this: ARef<Self>)"
+        ],
+        "must_not_contain": []
+      },
+      "block-tag-set-surface": {
+        "linked_obligation_ids": [
+          "block-tag-set-lifetime"
+        ],
+        "file": "rust/kernel/block/mq/tag_set.rs",
+        "must_contain": [
+          "pub struct TagSet<T: Operations> {",
+          "pub fn new(",
+          "impl<T: Operations> PinnedDrop for TagSet<T> {"
+        ],
+        "must_not_contain": []
+      },
+      "block-gen-disk-builder-surface": {
+        "linked_obligation_ids": [
+          "block-gen-disk-queue-data-lifetime"
+        ],
+        "file": "rust/kernel/block/mq/gen_disk.rs",
+        "must_contain": [
+          "pub struct GenDiskBuilder {",
+          "pub fn build<T: Operations>(",
+          "pub struct GenDisk<T: Operations> {"
+        ],
+        "must_not_contain": []
+      },
+      "configfs-subsystem-surface": {
+        "linked_obligation_ids": [
+          "configfs-subsystem-registration"
+        ],
+        "file": "rust/kernel/configfs.rs",
+        "must_contain": [
+          "pub struct Subsystem<Data> {",
+          "bindings::configfs_register_subsystem",
+          "bindings::configfs_unregister_subsystem"
+        ],
+        "must_not_contain": []
+      },
+      "configfs-group-surface": {
+        "linked_obligation_ids": [
+          "configfs-group-ffi-lifecycle"
+        ],
+        "file": "rust/kernel/configfs.rs",
+        "must_contain": [
+          "pub trait GroupOperations {",
+          "unsafe extern \"C\" fn make_group(",
+          "unsafe extern \"C\" fn drop_item("
+        ],
+        "must_not_contain": []
+      },
+      "configfs-attribute-surface": {
+        "linked_obligation_ids": [
+          "configfs-group-ffi-lifecycle"
+        ],
+        "file": "rust/kernel/configfs.rs",
+        "must_contain": [
+          "pub trait AttributeOperations<const ID: u64 = 0> {",
+          "fn show(",
+          "fn store("
+        ],
+        "must_not_contain": []
+      }
+    }
+  },
+  "unsafe": {
+    "unsafe_obligation_templates": {
+      "block-mq-request-callback-bridge": {
+        "phase": "mvp",
+        "area": "block-mq-core",
+        "category": "callback-bridge",
+        "evidence_context_key": "required_callbacks",
+        "obligation": "All blk-mq request callback trampolines must keep raw request and queue-data handling confined to the Rust block abstraction.",
+        "preferred_discharge": "Keep blk-mq callback registration, request refcount transfer, and queue-data borrowing inside `rust/kernel/block/mq/operations.rs` only.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "block-request-completion-lifecycle": {
+        "phase": "mvp",
+        "area": "block-request",
+        "category": "request-lifecycle",
+        "evidence_context_key": "queue_rq_calls",
+        "obligation": "Request completion and request ownership transitions must stay encoded by the Rust `Request` abstraction rather than driver-side raw blk-mq calls.",
+        "preferred_discharge": "Route completion through `Request::end_ok` / `Request::complete` only and keep the underlying raw blk-mq lifetime bookkeeping inside `rust/kernel/block/mq/request.rs`.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "block-tag-set-lifetime": {
+        "phase": "mvp",
+        "area": "block-tag-set",
+        "category": "registration-lifetime",
+        "evidence_literals": [
+          "TagSet::new",
+          "PinnedDrop for TagSet"
+        ],
+        "obligation": "The blk-mq tag-set abstraction must keep registration and teardown paired with the lifetime of the Rust block device.",
+        "preferred_discharge": "Keep tag-set allocation and teardown in `rust/kernel/block/mq/tag_set.rs` and tie disk creation to owned tag-set references only.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "block-gen-disk-queue-data-lifetime": {
+        "phase": "mvp",
+        "area": "block-gen-disk",
+        "category": "queue-data-lifetime",
+        "evidence_literals": [
+          "GenDiskBuilder::build",
+          "queuedata"
+        ],
+        "obligation": "The `GenDiskBuilder` abstraction must keep queue-data foreign ownership and disk teardown paired with the generated disk lifetime.",
+        "preferred_discharge": "Own queue-data conversion and disk teardown inside `rust/kernel/block/mq/gen_disk.rs` only.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "configfs-subsystem-registration": {
+        "phase": "mvp",
+        "area": "configfs",
+        "category": "registration",
+        "evidence_literals": [
+          "configfs_register_subsystem",
+          "configfs_unregister_subsystem"
+        ],
+        "obligation": "Configfs subsystem registration and unregistration must stay inside the Rust configfs abstraction and remain exactly paired.",
+        "preferred_discharge": "Keep configfs subsystem registration in `Subsystem::new` and teardown in the configfs abstraction drop path.",
+        "allowed_unsafe_location": "abstraction-only"
+      },
+      "configfs-group-ffi-lifecycle": {
+        "phase": "mvp",
+        "area": "configfs",
+        "category": "child-lifecycle",
+        "evidence_context_key": "power_store_calls",
+        "obligation": "Configfs group creation, drop, and attribute dispatch must keep raw pointer conversion and child reference accounting confined to the configfs abstraction.",
+        "preferred_discharge": "Use `configfs::Group`, `GroupOperations`, and `AttributeOperations` only; keep raw group/item pointer handling inside `rust/kernel/configfs.rs`.",
+        "allowed_unsafe_location": "abstraction-only"
+      }
+    }
+  }
+}
