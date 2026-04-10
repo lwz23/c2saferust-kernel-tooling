@@ -1856,6 +1856,115 @@ const GOLDFISH_AS_INVALID_HANDLE: u32 = u32::MAX;
             self.assertEqual(summary["runtime_assessment"]["primary_runner"], "configfs-lifecycle-calibration")
             self.assertTrue(summary["runtime_assessment"]["primary_runner_available"])
 
+    def test_refresh_artifacts_supports_rnull_blind_profile(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_rnull_sample_root(root)
+            output_dir = root / "Documentation" / "rust" / "c2saferust" / "rnull_blind_strict_v1"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(self.SCRIPT_PATH),
+                    "refresh-artifacts",
+                    "--repo-root",
+                    str(root),
+                    "--profile-id",
+                    "rnull_blind_strict_v1",
+                    "--output-dir",
+                    str(output_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["module_id"], "rnull_blind_strict_v1")
+            self.assertIn(
+                "Documentation/rust/c2saferust/rnull_blind_strict_v1/agent-workflow-plan.json",
+                payload["generated_artifacts"],
+            )
+
+            abstraction = json.loads((output_dir / "abstraction-plan.json").read_text())
+            workflow_plan = json.loads((output_dir / "agent-workflow-plan.json").read_text())
+            translation = json.loads((output_dir / "translation-plan.json").read_text())
+
+            self.assertEqual(
+                abstraction["source_inventory"]["blk_mq_ops"]["field_map"]["queue_rq"],
+                "null_queue_rq",
+            )
+            self.assertEqual(
+                abstraction["source_inventory"]["blk_mq_ops"]["field_map"]["complete"],
+                "null_complete_rq",
+            )
+            self.assertEqual(
+                abstraction["source_inventory"]["configfs_group_operations"]["field_map"]["make_group"],
+                "nullb_group_make_group",
+            )
+            self.assertTrue(
+                {"power", "blocksize", "rotational", "size", "irqmode"}.issubset(
+                    set(abstraction["source_inventory"]["configfs"]["device_attributes"])
+                )
+            )
+            self.assertEqual(workflow_plan["driver_object_path"], "drivers/block/rnull/rnull_mod.o")
+            self.assertEqual(workflow_plan["driver_module_path"], "drivers/block/rnull/rnull_mod.ko")
+            self.assertEqual(workflow_plan["agent_workflow"]["topology"]["agent_count"], 3)
+            gate_commands = [gate["command"] for gate in workflow_plan["acceptance_gates"]]
+            self.assertTrue(
+                all("/tmp/c2saferust-rnull-build" in command for command in gate_commands[1:])
+            )
+            self.assertEqual(translation["driver_rust_path"], "drivers/block/rnull/rnull.rs")
+            self.assertIn(
+                "#![forbid(unsafe_code)]",
+                translation["driver_policy"]["required_crate_attributes"],
+            )
+            self.assertIn(
+                "bindings::blk_mq_requeue_request",
+                translation["forbidden_driver_calls"],
+            )
+
+    def test_bootstrap_benchmark_supports_rnull_blind_profile(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_rnull_sample_root(root)
+            benchmark_dir = root / "Documentation" / "rust" / "c2saferust" / "benchmarks" / "rnull-blind-benchmark"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(self.SCRIPT_PATH),
+                    "bootstrap-benchmark",
+                    "--repo-root",
+                    str(root),
+                    "--benchmark-id",
+                    "rnull-blind-benchmark",
+                    "--output-dir",
+                    str(benchmark_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["benchmark_id"], "rnull-blind-benchmark")
+
+            manifest = json.loads((benchmark_dir / "module-manifest.json").read_text())
+            summary = json.loads((benchmark_dir / "validator-ready-summary.json").read_text())
+            self.assertEqual(manifest["profile_id"], "rnull_blind_strict_v1")
+            self.assertEqual(
+                manifest["blind_policy"]["physical_absence_required_paths"],
+                [
+                    "drivers/block/rnull/rnull.rs",
+                    "drivers/block/rnull/configfs.rs",
+                ],
+            )
+            self.assertEqual(summary["runtime_assessment"]["primary_runner"], "qemu-module-lifecycle")
+            self.assertTrue(summary["runtime_assessment"]["primary_runner_available"])
+
     def test_goldfish_external_source_context_resolves_profile(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

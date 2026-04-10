@@ -2973,7 +2973,11 @@ def build_translation_plan(
             "note": "The first Rust loop should keep raw pointer work and bindgen coupling inside the abstractions named above; driver code must remain free of `unsafe` and direct `bindings::*` usage.",
             "linked_obligations": [entry["id"] for entry in unsafe_plan["obligations"]],
         },
-        "driver_policy": translation_profile["driver_policy"],
+        "driver_policy": {
+            **translation_profile["driver_policy"],
+            "required_crate_attributes": profile["safety"]["driver_policy"]["required_crate_attributes"],
+            "forbidden_tokens": profile["safety"]["driver_policy"]["forbidden_tokens"],
+        },
         **_artifact_metadata(profile),
     }
     for key in [
@@ -3506,6 +3510,12 @@ def build_agent_workflow_plan(
     managed_abstraction_files = safety_policy["abstraction_policy"]["allowlisted_files"]
     managed_files = [driver_rust_path, *managed_abstraction_files]
     driver_object_path, driver_module_path = _driver_build_targets(context, kbuild_plan)
+    configured_build_dir = None
+    for role in profile.get("agent_workflow", {}).get("topology", {}).get("roles", []):
+        if role.get("id") == "builder" and role.get("must_use_build_dir"):
+            configured_build_dir = role["must_use_build_dir"]
+            break
+    build_dir = configured_build_dir or f"/tmp/c2saferust-{module_id}-build"
 
     readiness_blockers = []
     if not translation_plan["readiness"]["ready_for_minimal_driver_codegen"]:
@@ -3668,25 +3678,21 @@ def build_agent_workflow_plan(
                 "id": "rust-toolchain-available",
                 "stage": "pre-smoke",
                 "mandatory": True,
-                "command": (
-                    "make O=/tmp/c2saferust-"
-                    f"{module_id}"
-                    "-build <LLVM/ENV> rustavailable"
-                ),
+                "command": f"make O={build_dir} <LLVM/ENV> rustavailable",
                 "pass_condition": "`make rustavailable` exits 0 with the same LLVM/libclang environment used for module packaging.",
             },
             {
                 "id": "compile-driver-object",
                 "stage": "pre-smoke",
                 "mandatory": True,
-                "command": f"make O=/tmp/c2saferust-{module_id}-build <LLVM/ENV> {driver_object_path}",
+                "command": f"make O={build_dir} <LLVM/ENV> {driver_object_path}",
                 "pass_condition": f"`make` exits 0 for `{driver_object_path}` after safety gate passes.",
             },
             {
                 "id": "package-module",
                 "stage": "pre-smoke",
                 "mandatory": True,
-                "command": f"make O=/tmp/c2saferust-{module_id}-build <LLVM/ENV> {driver_module_path}",
+                "command": f"make O={build_dir} <LLVM/ENV> {driver_module_path}",
                 "pass_condition": f"`make` exits 0 for `{driver_module_path}` after the lifecycle fragment is merged into the build dir.",
             },
         ],

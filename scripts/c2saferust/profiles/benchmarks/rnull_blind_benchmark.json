@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-benchmark-profile",
+  "benchmark_id": "rnull-blind-benchmark",
+  "module_profile_id": "rnull_blind_strict_v1",
+  "module_id": "rnull_blind_strict_v1",
+  "module_path": "drivers/block/null_blk/main.c",
+  "driver_rust_path": "drivers/block/rnull/rnull.rs",
+  "artifact_dir": "Documentation/rust/c2saferust/rnull_blind_strict_v1",
+  "module_title": "rnull strict blind-first benchmark",
+  "benchmark_track": "formal-ground-truth",
+  "sample_tier": "small",
+  "scope": "full_driver",
+  "quota_class": "phase1-formal",
+  "target_runtime_state": "lifecycle_validated",
+  "claim_ceiling": "QEMU lifecycle only; not formal blind ground-truth until rerun on a physical-absence blind tree.",
+  "blind_policy": {
+    "freeze_before_compare": true,
+    "incidental_path_exposure_policy": "path-only-no-body-no-diff",
+    "provenance_log_required": true,
+    "contamination_mode": "strict-rerun-required",
+    "physical_absence_required_paths": [
+      "drivers/block/rnull/rnull.rs",
+      "drivers/block/rnull/configfs.rs"
+    ]
+  },
+  "search_hygiene": {
+    "forbidden_reference_paths": [
+      "drivers/block/rnull/rnull.rs",
+      "drivers/block/rnull/configfs.rs",
+      "any git show drivers/block/rnull/rnull.rs",
+      "any git show drivers/block/rnull/configfs.rs"
+    ],
+    "search_allowlist": [
+      "drivers/block/null_blk",
+      "drivers/block/Kconfig",
+      "drivers/block/Makefile",
+      "drivers/block/rnull/Kconfig",
+      "drivers/block/rnull/Makefile",
+      "rust/kernel/block.rs",
+      "rust/kernel/block",
+      "rust/kernel/configfs.rs",
+      "Documentation/rust/c2saferust/rnull_blind_strict_v1"
+    ]
+  },
+  "difference_metrics": {
+    "api_markers": [
+      "module!",
+      "impl Operations for",
+      "impl configfs::GroupOperations for",
+      "impl AttributeOperations<"
+    ],
+    "callback_markers": [
+      "fn queue_rq(",
+      "fn complete(",
+      "fn make_group(",
+      "fn show(",
+      "fn store("
+    ],
+    "teardown_markers": [
+      "drop",
+      "release",
+      "power",
+      "remove",
+      "unregister"
+    ]
+  },
+  "runtime_plan": {
+    "primary_runner": "qemu-module-lifecycle",
+    "minimum_state": "lifecycle_validated",
+    "note": "Stage B focuses on QEMU module load/unload first; configfs create/power/I/O validation is deferred until the runner is extended."
+  }
+}
