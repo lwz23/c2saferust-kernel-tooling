@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-template-profile",
+  "template_id": "generic_unknown_rules",
+  "rule_pack_ids": [],
+  "planning": {
+    "bindings_patch_style_constraints": [
+      "Treat auto-discovered unknown subsystems as manual-review-first plans until a dedicated family profile exists.",
+      "Prefer conservative translation output over subsystem-specific invention when the AutoProfiler cannot prove a richer abstraction surface."
+    ]
+  },
+  "analysis": {
+    "source_model": "generic_callback_tables"
+  },
+  "translation": {
+    "allowed_driver_surfaces": [
+      "kernel::prelude::*",
+      "module!"
+    ],
+    "forbidden_driver_calls": [
+      "bindings::"
+    ],
+    "driver_policy": {
+      "driver_zero_unsafe": true,
+      "driver_zero_bindings": true,
+      "driver_zero_extern_c": true
+    },
+    "driver_generation_rules": [
+      "Treat this auto-discovered module as a planning target only; keep translation output conservative until a dedicated family profile exists.",
+      "Prefer manual-review placeholders over subsystem-specific helper invention when the callback semantics are not yet modeled.",
+      "Do not claim abstraction coverage beyond the callback tables and C evidence captured by the generic callback inventory."
+    ]
+  },
+  "safety": {
+    "driver_policy": {
+      "zero_unsafe": true,
+      "zero_bindings": true,
+      "zero_extern_c": true,
+      "required_crate_attributes": [
+        "#![forbid(unsafe_code)]"
+      ],
+      "forbidden_tokens": [
+        "unsafe",
+        "bindings::",
+        "extern \"C\"",
+        "*mut ",
+        "*const "
+      ]
+    },
+    "abstraction_allowlist_prefixes": [],
+    "soundness_rule_templates": {}
+  },
+  "unsafe": {
+    "driver_side_rules": [
+      "Do not use `unsafe` in driver code, including `unsafe impl`, `unsafe fn`, or `unsafe {}` blocks.",
+      "Do not reference `bindings::*` directly from driver code; any subsystem-specific raw FFI must first graduate into an explicit abstraction plan.",
+      "Treat every auto-discovered callback outside the approved surface as manual-review work until a dedicated family profile exists."
+    ],
+    "unsafe_obligation_templates": {}
+  }
+}

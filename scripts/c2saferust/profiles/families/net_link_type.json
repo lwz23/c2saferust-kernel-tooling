@@ -3,6 +3,11 @@
   "profile_type": "c2saferust-family-profile",
   "family_id": "net-link-type",
   "template_id": "net_link_type_rules",
+  "signature_structs": [
+    "rtnl_link_ops",
+    "net_device_ops",
+    "ethtool_ops"
+  ],
   "helper_wrapper_candidates": {
     "dev_kfree_skb": {
       "helper_name": "rust_helper_dev_kfree_skb",

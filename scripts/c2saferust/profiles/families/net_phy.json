@@ -3,6 +3,9 @@
   "profile_type": "c2saferust-family-profile",
   "family_id": "net-phy",
   "template_id": "net_phy_rules",
+  "signature_structs": [
+    "phy_driver"
+  ],
   "helper_wrapper_candidates": {},
   "direct_ffi_candidates": {},
   "default_binding_header_decision": {

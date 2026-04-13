@@ -59,6 +59,31 @@ def _load_rule_pack(rule_pack_id: str) -> tuple[dict, str]:
     return _load_json(rule_pack_path), _rel(rule_pack_path)
 
 
+def load_family_registry() -> dict:
+    families_by_id: dict[str, dict] = {}
+    signature_to_families: dict[str, list[str]] = {}
+    family_sources: dict[str, list[str]] = {}
+
+    for family_path in sorted((PROFILE_ROOT / "families").glob("*.json")):
+        raw_family = _load_json(family_path)
+        family_id = raw_family["family_id"]
+        family = load_family_profile(family_id)
+        families_by_id[family_id] = family
+        family_sources[family_id] = list(family.get("profile_sources", []))
+        for signature in family.get("signature_structs", raw_family.get("signature_structs", [])):
+            if not isinstance(signature, str):
+                continue
+            families = signature_to_families.setdefault(signature, [])
+            if family_id not in families:
+                families.append(family_id)
+
+    return {
+        "families_by_id": families_by_id,
+        "signature_to_families": signature_to_families,
+        "family_sources": family_sources,
+    }
+
+
 def _apply_rule_packs(base: dict, rule_pack_ids: list[str]) -> tuple[dict, list[str]]:
     merged = dict(base)
     sources: list[str] = []
@@ -159,9 +184,23 @@ def load_module_profile_by_id(profile_id: str) -> dict:
     return _finalize_module_profile(module_profile, module_profile_path, module_profile["module_path"])
 
 
-def resolve_module_profile(*, module_path: str | Path | None = None, profile_id: str | None = None) -> dict:
+def load_module_profile_from_path(profile_path: str | Path) -> dict:
+    module_profile_path = Path(profile_path)
+    module_profile = _load_json(module_profile_path)
+    module_path = module_profile.get("module_path", module_profile_path.stem)
+    return _finalize_module_profile(module_profile, module_profile_path, module_path)
+
+
+def resolve_module_profile(
+    *,
+    module_path: str | Path | None = None,
+    profile_id: str | None = None,
+    profile_path: str | Path | None = None,
+) -> dict:
+    if profile_path is not None:
+        return load_module_profile_from_path(profile_path)
     if profile_id:
         return load_module_profile_by_id(profile_id)
     if module_path is None:
-        raise ValueError("Either `module_path` or `profile_id` must be provided.")
+        raise ValueError("Either `module_path`, `profile_id`, or `profile_path` must be provided.")
     return load_module_profile(module_path)

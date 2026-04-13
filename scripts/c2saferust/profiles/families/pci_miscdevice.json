@@ -3,6 +3,10 @@
   "profile_type": "c2saferust-family-profile",
   "family_id": "pci-miscdevice",
   "template_id": "pci_miscdevice_rules",
+  "signature_structs": [
+    "pci_driver",
+    "file_operations"
+  ],
   "helper_wrapper_candidates": {},
   "direct_ffi_candidates": {},
   "default_binding_header_decision": {

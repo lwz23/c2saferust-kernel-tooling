@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
+import autoprofiler
 import benchmark
 import candidate_targets
 import intake
@@ -34,6 +35,7 @@ def _add_module_selector_args(
     else:
         parser.add_argument("--module-path")
     parser.add_argument("--profile-id")
+    parser.add_argument("--profile-path")
     parser.add_argument("--source-tree")
 
 
@@ -49,6 +51,13 @@ def _module_selector_kwargs(args: argparse.Namespace) -> dict:
     return {
         "profile_id": getattr(args, "profile_id", None),
         "source_tree": getattr(args, "source_tree", None),
+    }
+
+
+def _intake_selector_kwargs(args: argparse.Namespace) -> dict:
+    return {
+        **_module_selector_kwargs(args),
+        "profile_path": getattr(args, "profile_path", None),
     }
 
 
@@ -202,6 +211,12 @@ def parse_args() -> argparse.Namespace:
     refresh_artifacts.add_argument("--output-dir")
     _add_kernel_tree_args(refresh_artifacts, include_artifact_root=True)
 
+    auto_process = subparsers.add_parser("auto-process")
+    auto_process.add_argument("--module-path", required=True)
+    auto_process.add_argument("--output-dir", required=True)
+    auto_process.add_argument("--source-tree")
+    _add_kernel_tree_args(auto_process, include_artifact_root=True)
+
     bootstrap_benchmark = subparsers.add_parser("bootstrap-benchmark")
     _add_module_selector_args(bootstrap_benchmark)
     _add_benchmark_args(bootstrap_benchmark)
@@ -273,7 +288,7 @@ def run_intake_kbuild(args: argparse.Namespace) -> str:
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     intake.write_json(args.output, payload)
     return intake.stable_json(payload)
@@ -284,13 +299,13 @@ def run_audit_bindings(args: argparse.Namespace) -> str:
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     helper_payload = intake.build_helper_audit(
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     intake.write_json(args.binding_output, binding_payload)
     intake.write_json(args.helper_output, helper_payload)
@@ -302,7 +317,7 @@ def run_plan_external_headers(args: argparse.Namespace) -> str:
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     intake.write_json(args.output, payload)
     return intake.stable_json(payload)
@@ -313,19 +328,19 @@ def run_plan_patches(args: argparse.Namespace) -> str:
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     bindings_payload = intake.build_bindings_patch_plan(
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     helpers_payload = intake.build_helpers_patch_plan(
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     intake.write_json(args.kbuild_output, kbuild_payload)
     intake.write_json(args.bindings_output, bindings_payload)
@@ -338,13 +353,13 @@ def run_plan_abstractions(args: argparse.Namespace) -> str:
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     unsafe_payload = intake.build_unsafe_obligations(
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     intake.write_json(args.abstraction_output, abstraction_payload)
     intake.write_json(args.unsafe_output, unsafe_payload)
@@ -356,7 +371,7 @@ def run_plan_translation(args: argparse.Namespace) -> str:
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     intake.write_json(args.translation_output, payload)
     return intake.stable_json(payload)
@@ -402,6 +417,7 @@ def run_verify_safety(args: argparse.Namespace) -> str:
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         profile_id=getattr(args, "profile_id", None),
+        profile_path=getattr(args, "profile_path", None),
         source_tree=getattr(args, "source_tree", None),
     )
     ledger_output = (
@@ -455,7 +471,7 @@ def run_plan_agent_workflow(args: argparse.Namespace) -> str:
         args.module_path,
         repo_root=_kernel_tree_arg(args),
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     intake.write_json(args.output, payload)
     return intake.stable_json(payload)
@@ -520,7 +536,7 @@ def run_bootstrap_module(args: argparse.Namespace) -> str:
         repo_root=_kernel_tree_arg(args),
         output_dir=args.output_dir,
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     return intake.stable_json(manifest)
 
@@ -535,7 +551,7 @@ def run_refresh_artifacts(args: argparse.Namespace) -> str:
         repo_root=_kernel_tree_arg(args),
         output_dir=args.output_dir,
         artifact_root=_artifact_root_arg(args),
-        **_module_selector_kwargs(args),
+        **_intake_selector_kwargs(args),
     )
     return intake.stable_json(manifest)
 
@@ -639,6 +655,63 @@ def run_score_candidate_targets(args: argparse.Namespace) -> str:
     return intake.stable_json(payload)
 
 
+def _rel_or_abs(root: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
+def run_auto_process(args: argparse.Namespace) -> str:
+    repo_root = Path(_kernel_tree_arg(args)).resolve()
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    discovery = autoprofiler.discover_auto_profile(
+        args.module_path,
+        repo_root=repo_root,
+        source_tree=getattr(args, "source_tree", None),
+        output_dir=output_dir,
+    )
+
+    profile_path = output_dir / "auto-profile.json"
+    report_path = output_dir / "auto-profile-report.json"
+    intake.write_json(profile_path, discovery["generated_profile"])
+    intake.write_json(report_path, discovery["report"])
+
+    bootstrap_manifest = intake.write_planning_artifacts(
+        args.module_path,
+        repo_root=repo_root,
+        output_dir=output_dir,
+        artifact_root=_artifact_root_arg(args),
+        profile_path=profile_path,
+        source_tree=getattr(args, "source_tree", None),
+    )
+
+    manifest = {
+        "schema_version": 1,
+        "artifact_type": "auto-process-manifest",
+        "module_id": discovery["generated_profile"]["module_id"],
+        "profile_id": discovery["generated_profile"]["profile_id"],
+        "selected_family_id": discovery["selected_family_id"],
+        "selection_mode": discovery["selection_mode"],
+        "generated_artifacts": intake._dedupe_preserve_order(
+            [
+                _rel_or_abs(repo_root, profile_path),
+                _rel_or_abs(repo_root, report_path),
+                *bootstrap_manifest["generated_artifacts"],
+            ]
+        ),
+    }
+    manifest_path = output_dir / "auto-process-manifest.json"
+    intake.write_json(manifest_path, manifest)
+    manifest["generated_artifacts"] = intake._dedupe_preserve_order(
+        [*manifest["generated_artifacts"], _rel_or_abs(repo_root, manifest_path)]
+    )
+    intake.write_json(manifest_path, manifest)
+    return intake.stable_json(manifest)
+
+
 def main() -> int:
     args = parse_args()
     if args.command == "intake-kbuild":
@@ -677,6 +750,8 @@ def main() -> int:
         rendered = run_bootstrap_module(args)
     elif args.command == "refresh-artifacts":
         rendered = run_refresh_artifacts(args)
+    elif args.command == "auto-process":
+        rendered = run_auto_process(args)
     elif args.command == "bootstrap-benchmark":
         rendered = run_bootstrap_benchmark(args)
     elif args.command == "init-blind-worktree-pair":

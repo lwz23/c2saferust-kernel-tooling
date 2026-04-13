@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-module-profile",
+  "profile_id": "dummy_ast_eval",
+  "family_id": "net-link-type",
+  "rule_pack_ids": [
+    "net_link_type_core_safety"
+  ],
+  "module_path": "drivers/net/dummy.c",
+  "module_id": "dummy",
+  "artifact_dir": "Documentation/rust/c2saferust/dummy_ast_eval",
+  "driver_rust_path": "drivers/net/dummy_rust.rs",
+  "translation": {
+    "goal": "Constrain the first `drivers/net/dummy_rust.rs` to the minimal registration, setup, validate, and lifecycle loops required by the upstream dummy net driver while keeping the net-link-type abstraction surface intact.",
+    "abstraction_goal": "Keep the Rust artifact inside the existing `net::rtnl` + `net::netdevice` + `net::stats` stack so the tool can reason about link-type registration, netdev ops wiring, and the trivial xmit/stat paths without inventing new unsafe helpers.",
+    "mvp_scope": {
+      "target_command": "ip link add dummy0 type dummy && ip link set dummy0 up && ip link set dummy0 down && ip link del dummy0",
+      "note": "Phase-1 Rust driver should cover lifecycle registration plus wired netdev ops that keep packets dropped but stats updated."
+    },
+    "required_callback_fields": [
+      {
+        "source": "rtnl_link_ops",
+        "field": "setup"
+      },
+      {
+        "source": "rtnl_link_ops",
+        "field": "validate"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_init"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_start_xmit"
+      }
+    ],
+    "deferred_callback_fields": [
+      {
+        "source": "net_device_ops",
+        "field": "ndo_get_stats64"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_change_carrier"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_validate_addr"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_set_rx_mode"
+      },
+      {
+        "source": "net_device_ops",
+        "field": "ndo_set_mac_address"
+      },
+      {
+        "source": "ethtool_ops",
+        "field": "get_ts_info"
+      }
+    ],
+    "callback_roles": {
+      "rtnl_link_ops.setup": {
+        "status": "required",
+        "rust_surface": "impl rtnl::LinkOperations for DummyLink::setup",
+        "body_plan": [
+          "Run the typed equivalent of `ether_setup`, then wire the module-specific `netdev_ops`/`ethtool_ops` and device flags (no-ARP, no multicast, random MAC, xmit-limited features).",
+          "Keep netdev field writes inside the wrapper rather than touching `bindings::*` directly."
+        ]
+      },
+      "rtnl_link_ops.validate": {
+        "status": "required",
+        "rust_surface": "impl rtnl::LinkOperations for DummyLink::validate",
+        "body_plan": [
+          "Translate `tb[IFLA_ADDRESS]` checks into `ValidateContext` helpers that enforce length `ETH_ALEN` and address validity.",
+          "Return typed `Err(EINVAL)`/`Err(EADDRNOTAVAIL)` when the upstream checks fail."
+        ]
+      },
+      "net_device_ops.ndo_init": {
+        "status": "required",
+        "rust_surface": "impl netdevice::Operations for DummyDevice::init",
+        "body_plan": [
+          "Set `pcpu_stat_type` through the typed setter and keep the `netdev_lockdep_set_classes` call inside the helper/module shim."
+        ]
+      },
+      "net_device_ops.ndo_start_xmit": {
+        "status": "required",
+        "rust_surface": "impl netdevice::Operations for DummyDevice::start_xmit",
+        "body_plan": [
+          "Record the packet length with `stats::dev_lstats_add`, timestamp via `skb::timestamp`, and drop it through the safe `SkBuff` ownership helpers while returning `TxOutcome::Ok`."
+        ]
+      },
+      "net_device_ops.ndo_validate_addr": {
+        "status": "deferred",
+        "rust_surface": "impl netdevice::Operations for DummyDevice::validate_addr",
+        "body_plan": [
+          "Delegate to the existing `eth_validate_addr` abstraction exposed by `netdevice::eth`."
+        ]
+      },
+      "net_device_ops.ndo_set_rx_mode": {
+        "status": "deferred",
+        "rust_surface": "impl netdevice::Operations for DummyDevice::set_rx_mode",
+        "body_plan": [
+          "Mirror the upstream empty implementation so the Rust shim can stay in place while keeping the MAC/multicast flags managed elsewhere."
+        ]
+      },
+      "net_device_ops.ndo_set_mac_address": {
+        "status": "deferred",
+        "rust_surface": "impl netdevice::Operations for DummyDevice::set_mac_address",
+        "body_plan": [
+          "Route to the existing `eth_mac_addr` helper so the module does not claim new bindgen constants."
+        ]
+      },
+      "net_device_ops.ndo_get_stats64": {
+        "status": "deferred",
+        "rust_surface": "impl netdevice::Operations for DummyDevice::get_stats64",
+        "body_plan": [
+          "Expose the per-CPU stats read via the typed wrapper that mirrors `dev_lstats_read`."
+        ]
+      },
+      "net_device_ops.ndo_change_carrier": {
+        "status": "deferred",
+        "rust_surface": "impl netdevice::Operations for DummyDevice::change_carrier",
+        "body_plan": [
+          "Call `netif::carrier_on` or `netif::carrier_off` through the wrapper based on the requested carrier state."
+        ]
+      }
+    },
+    "setup_translation_map": {
+      "netdev_ops": {
+        "status": "required",
+        "rust_surface": "dev.set_netdev_ops(&DummyDevice::NETDEV_OPS)",
+        "note": "The wrapper should publish the ld-inside `net_device_ops` struct so the setup path can borrow the static reference."
+      },
+      "ethtool_ops": {
+        "status": "required",
+        "rust_surface": "dev.set_ethtool_ops(&DummyDevice::ETH_TOOL_OPS)",
+        "note": "Expose the minimal ethtool ops handler that only routes `get_ts_info`."
+      },
+      "needs_free_netdev": {
+        "status": "required",
+        "rust_surface": "dev.set_needs_free_netdev(true)",
+        "note": "Keep the ownership policy identical to the upstream driver."
+      },
+      "request_ops_lock": {
+        "status": "required",
+        "rust_surface": "dev.set_request_ops_lock(true)",
+        "note": "Mirror the C field to keep the lock owner consistent."
+      },
+      "flags": {
+        "status": "required",
+        "rust_surface": "dev.add_flags(netdevice::flags::NOARP) && dev.remove_flags(netdevice::flags::MULTICAST)",
+        "note": "Enforce the no-ARP/multicast bits inside typed setters."
+      },
+      "priv_flags": {
+        "status": "required",
+        "rust_surface": "dev.add_priv_flags(netdevice::priv_flags::LIVE_ADDR_CHANGE | netdevice::priv_flags::NO_QUEUE)",
+        "note": "Preserve the same private-flag combination the C driver writes."
+      },
+      "lltx": {
+        "status": "required",
+        "rust_surface": "dev.set_lltx(true)",
+        "note": "Keep the lockless transmit marker in the wrapper."
+      },
+      "features": {
+        "status": "required",
+        "rust_surface": "dev.add_features(netdevice::features::SG | netdevice::features::FRAGLIST | netdevice::features::GSO_SOFTWARE | netdevice::features::HW_CSUM | netdevice::features::HIGHDMA | netdevice::features::GSO_ENCAP_ALL)",
+        "note": "Mirror the chained `|=` calls through a single typed call."
+      },
+      "hw_features": {
+        "status": "required",
+        "rust_surface": "dev.set_hw_features(dev.features())",
+        "note": "Copy the feature set into the hardware feature mask after the driver features are known."
+      },
+      "hw_enc_features": {
+        "status": "required",
+        "rust_surface": "dev.set_hw_enc_features(dev.features())",
+        "note": "Equalize encoded hardware features to stay in sync with the C driver."
+      },
+      "min_mtu": {
+        "status": "required",
+        "rust_surface": "dev.set_min_mtu(0)",
+        "note": "Keep the low MTU bound that the C setup assigns."
+      },
+      "max_mtu": {
+        "status": "required",
+        "rust_surface": "dev.set_max_mtu(0)",
+        "note": "Keep the upper MTU bound that the C setup assigns."
+      }
+    },
+    "validate_translation_rules": [
+      {
+        "field": "IFLA_ADDRESS",
+        "return": "-EINVAL",
+        "status": "required",
+        "rust_surface": "if ctx.link_attr_len(rtnl::LinkAttr::ADDRESS) != ETH_ALEN { return Err(EINVAL); }",
+        "note": "Use typed attr helpers instead of raw `nla_len`."
+      },
+      {
+        "field": "IFLA_ADDRESS",
+        "return": "-EADDRNOTAVAIL",
+        "status": "required",
+        "rust_surface": "if !netdevice::eth::is_valid_ether_addr(ctx.link_attr_data(rtnl::LinkAttr::ADDRESS)) { return Err(EADDRNOTAVAIL); }",
+        "note": "Route the address check through the existing `eth` helper."
+      }
+    ],
+    "module_shell": {
+      "module_macro_required": true,
+      "preferred_module_type": "DummyModule",
+      "preferred_driver_type": "DummyDevice",
+      "accepted_registration": "rtnl::Registration<DummyDevice>",
+      "module_name": "dummy"
+    },
+    "private_state": {
+      "type_name": null,
+      "layout": null,
+      "fields": [],
+      "note": "Dummy driver keeps no per-device private storage."
+    }
+  },
+  "oracle": {
+    "runner_id": "qemu-module-lifecycle",
+    "scenario_id": "module_load_unload",
+    "scenario_inputs": {
+      "module_name": "dummy",
+      "module_file_relpath_template": "drivers/net/{module_id}.ko",
+      "module_file_name_template": "dummy.ko"
+    }
+  }
+}

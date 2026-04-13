@@ -7,14 +7,13 @@ import json
 import re
 from pathlib import Path
 
+import c_ast
 import profiles
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INCLUDE_RE = re.compile(r'^\s*#include\s+[<"]([^>"]+)[>"]', re.MULTILINE)
 MAKEFILE_ENTRY_RE = re.compile(r'obj-\$\(CONFIG_([A-Z0-9_]+)\)\s*\+=\s*([A-Za-z0-9_.-]+)')
-INITIALIZER_FIELD_RE = re.compile(r"^\s*\.(\w+)\s*=\s*([^,]+),", re.MULTILINE)
-VALIDATE_CHECK_RE = re.compile(r"if\s*\(\s*tb\[(?P<field>[A-Z0-9_]+)\]\s*\)\s*return\s+(?P<retval>[-A-Z0-9_]+);")
 
 KEYWORD_CALLS = {"if", "return", "sizeof", "while", "for", "switch"}
 
@@ -64,6 +63,7 @@ def resolve_module_context(
     *,
     repo_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     repo = _repo_root(repo_root)
@@ -76,7 +76,11 @@ def resolve_module_context(
             roots.insert(0, source_tree_path)
         lookup_key = _path_lookup_key(module_path, roots=roots)
 
-    profile = profiles.resolve_module_profile(module_path=lookup_key, profile_id=profile_id)
+    profile = profiles.resolve_module_profile(
+        module_path=lookup_key,
+        profile_id=profile_id,
+        profile_path=profile_path,
+    )
     source_profile = profile.get("source", {})
     landing_profile = profile.get("landing", {})
     source_tree_role = source_profile.get("tree", "kernel-tree")
@@ -125,12 +129,14 @@ def _module_profile(
     module_path: str | Path | None = None,
     *,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     return resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )["profile"]
 
@@ -474,12 +480,14 @@ def module_lifecycle_config_requirements(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     profile = context["profile"]
@@ -513,6 +521,7 @@ def render_module_lifecycle_config(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> str:
     requirements = module_lifecycle_config_requirements(
@@ -520,6 +529,7 @@ def render_module_lifecycle_config(
         repo_root=repo_root,
         artifact_root=artifact_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     if not requirements["required_config_lines"]:
@@ -596,12 +606,14 @@ def write_planning_artifacts(
     output_dir: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -620,6 +632,7 @@ def write_planning_artifacts(
             repo_root=repo,
             artifact_root=artifact_root,
             profile_id=profile["profile_id"],
+            profile_path=profile_path,
             source_tree=source_tree,
         )
         target = destination / filename
@@ -631,6 +644,7 @@ def write_planning_artifacts(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     if lifecycle_requirements["enabled"]:
@@ -641,6 +655,7 @@ def write_planning_artifacts(
                 repo_root=repo,
                 artifact_root=artifact_root,
                 profile_id=profile["profile_id"],
+                profile_path=profile_path,
                 source_tree=source_tree,
             )
         )
@@ -695,85 +710,20 @@ def _find_makefile_line_for_object(text: str, object_name: str) -> tuple[str | N
     return None, None
 
 
-def _extract_brace_body(text: str, open_brace_index: int) -> str:
-    depth = 0
-    for index in range(open_brace_index, len(text)):
-        char = text[index]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[open_brace_index + 1 : index]
-    raise ValueError("Unbalanced braces while extracting C block")
+def _translation_unit(source_text: str | c_ast.CTranslationUnit) -> c_ast.CTranslationUnit:
+    if isinstance(source_text, c_ast.CTranslationUnit):
+        return source_text
+    return c_ast.CTranslationUnit(source_text)
 
 
-def _extract_function_body(source_text: str, function_name: str) -> str | None:
-    match = re.search(
-        rf"\b{re.escape(function_name)}\s*\([^;]*?\)\s*\{{",
-        source_text,
-        re.MULTILINE | re.DOTALL,
-    )
-    if not match:
-        return None
-    return _extract_brace_body(source_text, match.end() - 1)
-
-
-def _find_initializer_name(source_text: str, struct_name: str) -> str | None:
-    match = re.search(
-        rf"static\s+(?:const\s+)?struct\s+{re.escape(struct_name)}\s+([A-Za-z0-9_]+)[^=]*=\s*\{{",
-        source_text,
-        re.MULTILINE,
-    )
-    return match.group(1) if match else None
-
-
-def _extract_initializer_body(source_text: str, initializer_name: str) -> str | None:
-    match = re.search(
-        rf"\b{re.escape(initializer_name)}\b[^=]*=\s*\{{",
-        source_text,
-        re.MULTILINE,
-    )
-    if not match:
-        return None
-    return _extract_brace_body(source_text, match.end() - 1)
-
-
-def _extract_initializer_fields(initializer_body: str | None) -> list[dict]:
-    if not initializer_body:
+def _extract_pointer_field_assignments(
+    source_text: str | c_ast.CTranslationUnit,
+    function_name: str | None,
+    prefix: str,
+) -> list[dict]:
+    if not function_name:
         return []
-    return [
-        {
-            "field": match.group(1),
-            "value": match.group(2).strip(),
-        }
-        for match in INITIALIZER_FIELD_RE.finditer(initializer_body)
-    ]
-
-
-def _initializer_field_map(initializer_body: str | None, *, prefer_first: bool = False) -> dict[str, str]:
-    field_map: dict[str, str] = {}
-    for entry in _extract_initializer_fields(initializer_body):
-        if prefer_first and entry["field"] in field_map:
-            continue
-        field_map[entry["field"]] = entry["value"]
-    return field_map
-
-
-def _extract_pointer_field_assignments(body: str | None, prefix: str) -> list[dict]:
-    if not body:
-        return []
-    return [
-        {
-            "field": match.group(1),
-            "operator": match.group(2),
-            "value": match.group(3).strip(),
-        }
-        for match in re.finditer(
-            rf"{re.escape(prefix)}([A-Za-z0-9_]+)\s*(\|=|=)\s*([^;]+);",
-            body,
-        )
-    ]
+    return _translation_unit(source_text).find_member_assignments(function_name, prefix)
 
 
 def _private_state_source_fields(profile: dict) -> list[str]:
@@ -785,79 +735,79 @@ def _private_state_source_fields(profile: dict) -> list[str]:
     ]
 
 
-def _extract_private_member_assignments(body: str | None, source_fields: list[str]) -> list[dict]:
-    if not body:
+def _extract_private_member_assignments(
+    source_text: str | c_ast.CTranslationUnit,
+    function_name: str | None,
+    source_fields: list[str],
+) -> list[dict]:
+    if not function_name:
         return []
-
     assignments: list[dict] = []
-    for source_field in source_fields:
-        for match in re.finditer(
-            rf"\b([A-Za-z_][A-Za-z0-9_]*)->{re.escape(source_field)}\.([A-Za-z0-9_]+)\s*(\|=|=)\s*([^;]+);",
-            body,
-        ):
-            assignments.append(
-                {
-                    "private_binding": match.group(1),
-                    "source_field": source_field,
-                    "field": match.group(2),
-                    "operator": match.group(3),
-                    "value": match.group(4).strip(),
-                }
-            )
+    for entry in _translation_unit(source_text).find_assignment_chains(function_name):
+        accesses = entry["accesses"]
+        if len(accesses) != 2:
+            continue
+        if accesses[0]["operator"] != "->" or accesses[1]["operator"] != ".":
+            continue
+        if accesses[0]["field"] not in source_fields:
+            continue
+        assignments.append(
+            {
+                "private_binding": entry["root"],
+                "source_field": accesses[0]["field"],
+                "field": accesses[1]["field"],
+                "operator": entry["operator"],
+                "value": entry["value"],
+            }
+        )
     return assignments
 
 
-def _extract_call_sites(body: str | None) -> list[str]:
-    if not body:
-        return []
-    seen: list[str] = []
-    for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", body):
-        candidate = match.group(1)
-        if candidate in KEYWORD_CALLS or candidate == "this_cpu_ptr":
-            continue
-        if candidate not in seen:
-            seen.append(candidate)
-    return seen
-
-
-def _extract_validate_checks(body: str | None) -> list[dict]:
-    if not body:
+def _extract_call_sites(
+    source_text: str | c_ast.CTranslationUnit,
+    function_name: str | None,
+) -> list[str]:
+    if not function_name:
         return []
     return [
-        {
-            "field": match.group("field"),
-            "return": match.group("retval"),
-        }
-        for match in VALIDATE_CHECK_RE.finditer(body)
+        candidate
+        for candidate in _translation_unit(source_text).find_call_expressions(function_name)
+        if candidate not in KEYWORD_CALLS and candidate != "this_cpu_ptr"
     ]
 
 
-def _extract_private_struct_fields(source_text: str, struct_name: str) -> list[dict]:
-    match = re.search(
-        rf"struct\s+{re.escape(struct_name)}\s*\{{(?P<body>.*?)\}};",
-        source_text,
-        re.MULTILINE | re.DOTALL,
-    )
-    if not match:
+def _all_call_sites(source_text: str | c_ast.CTranslationUnit) -> set[str]:
+    translation_unit = _translation_unit(source_text)
+    calls: set[str] = set()
+    for function_name in translation_unit.list_function_names():
+        calls.update(_extract_call_sites(translation_unit, function_name))
+    return calls
+
+
+def _extract_validate_checks(
+    source_text: str | c_ast.CTranslationUnit,
+    function_name: str | None,
+) -> list[dict]:
+    if not function_name:
         return []
-
-    fields = []
-    for line in match.group("body").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("/*"):
-            continue
-        field_match = re.match(r"(.+?)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;$", stripped)
-        if field_match:
-            fields.append(
-                {
-                    "type": field_match.group(1).strip(),
-                    "name": field_match.group(2),
-                }
-            )
-    return fields
+    return _translation_unit(source_text).find_validate_checks(function_name)
 
 
-def _extract_named_structs(source_text: str, struct_names: list[str]) -> list[dict]:
+def _extract_private_struct_fields(source_text: str | c_ast.CTranslationUnit, struct_name: str) -> list[dict]:
+    record = _translation_unit(source_text).find_record(struct_name)
+    if record is None:
+        return []
+    return [
+        {
+            "type": member.get("type_spelling", member.get("return_type_spelling", "")),
+            "name": member["name"],
+        }
+        for member in record["members"]
+        if member["kind"] in {"field", "function_pointer"} and member.get("name")
+    ]
+
+
+def _extract_named_structs(source_text: str | c_ast.CTranslationUnit, struct_names: list[str]) -> list[dict]:
     structs: list[dict] = []
     seen: set[str] = set()
     for struct_name in struct_names:
@@ -876,23 +826,15 @@ def _extract_named_structs(source_text: str, struct_names: list[str]) -> list[di
     return structs
 
 
-def _extract_pointer_array_entries(source_text: str, array_name: str) -> list[str]:
-    match = re.search(
-        rf"\b{re.escape(array_name)}\b\s*\[\]\s*=\s*\{{(?P<body>.*?)\}};",
-        source_text,
-        re.MULTILINE | re.DOTALL,
-    )
-    if not match:
-        return []
-
-    entries: list[str] = []
-    for entry in re.findall(r"&([A-Za-z_][A-Za-z0-9_]*)", match.group("body")):
-        if entry not in entries:
-            entries.append(entry)
-    return entries
+def _extract_pointer_array_entries(source_text: str | c_ast.CTranslationUnit, array_name: str) -> list[str]:
+    return _translation_unit(source_text).find_pointer_array_entries(array_name)
 
 
-def _extract_prefixed_attribute_names(source_text: str, array_name: str, symbol_prefix: str) -> list[str]:
+def _extract_prefixed_attribute_names(
+    source_text: str | c_ast.CTranslationUnit,
+    array_name: str,
+    symbol_prefix: str,
+) -> list[str]:
     names: list[str] = []
     for entry in _extract_pointer_array_entries(source_text, array_name):
         if not entry.startswith(symbol_prefix):
@@ -903,20 +845,43 @@ def _extract_prefixed_attribute_names(source_text: str, array_name: str, symbol_
     return names
 
 
-def _extract_macro_invocation_names(source_text: str, macro_name: str) -> list[str]:
+def _extract_macro_invocation_names(source_text: str | c_ast.CTranslationUnit, macro_name: str) -> list[str]:
     names: list[str] = []
-    for entry in re.findall(rf"\b{re.escape(macro_name)}\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,", source_text):
-        if entry not in names:
-            names.append(entry)
+    for entry in _translation_unit(source_text).find_macro_invocations(macro_name):
+        arguments = entry.get("arguments", [])
+        if not arguments:
+            continue
+        if arguments[0] not in names:
+            names.append(arguments[0])
     return names
 
 
-def _extract_configfs_attribute_callback_maps(source_text: str) -> tuple[dict[str, str], dict[str, str], list[str], list[str]]:
+def _extract_configfs_attribute_callback_maps(
+    source_text: str | c_ast.CTranslationUnit,
+) -> tuple[dict[str, str], dict[str, str], list[str], list[str]]:
+    translation_unit = _translation_unit(source_text)
     show_map: dict[str, str] = {}
     store_map: dict[str, str] = {}
 
-    for match in re.finditer(r"\b(memb_group|nullb_device)_([A-Za-z0-9_]+)_(show|store)\s*\(", source_text):
-        prefix, attribute_name, callback_kind = match.groups()
+    for function_name in translation_unit.list_function_names():
+        callback_kind = None
+        prefix = None
+        if function_name.startswith("memb_group_") and function_name.endswith("_show"):
+            prefix = "memb_group"
+            callback_kind = "show"
+        elif function_name.startswith("memb_group_") and function_name.endswith("_store"):
+            prefix = "memb_group"
+            callback_kind = "store"
+        elif function_name.startswith("nullb_device_") and function_name.endswith("_show"):
+            prefix = "nullb_device"
+            callback_kind = "show"
+        elif function_name.startswith("nullb_device_") and function_name.endswith("_store"):
+            prefix = "nullb_device"
+            callback_kind = "store"
+        if prefix is None or callback_kind is None:
+            continue
+        suffix = f"_{callback_kind}"
+        attribute_name = function_name[len(prefix) + 1 : -len(suffix)]
         callback_name = f"{prefix}_{attribute_name}_{callback_kind}"
         if callback_kind == "show":
             show_map.setdefault(attribute_name, callback_name)
@@ -950,10 +915,11 @@ def _extract_configfs_attribute_callback_maps(source_text: str) -> tuple[dict[st
 
 
 def _helper_symbols_used(source_text: str, helper_wrapper_candidates: dict[str, dict]) -> list[str]:
+    called_functions = _all_call_sites(source_text)
     return [
         symbol
         for symbol in helper_wrapper_candidates
-        if re.search(rf"\b{re.escape(symbol)}\s*\(", source_text)
+        if symbol in called_functions
     ]
 
 
@@ -1236,50 +1202,162 @@ def _translation_callback_specs(translation_profile: dict) -> list[dict]:
     return specs
 
 
-def _extract_callback_table(source_text: str, struct_name: str) -> tuple[str | None, str | None, list[dict], dict[str, str]]:
-    initializer_name = _find_initializer_name(source_text, struct_name)
-    initializer_body = _extract_initializer_body(source_text, initializer_name) if initializer_name else None
-    fields = _extract_initializer_fields(initializer_body)
-    return initializer_name, initializer_body, fields, _initializer_field_map(initializer_body)
+def _extract_callback_table(
+    source_text: str | c_ast.CTranslationUnit,
+    struct_name: str,
+    *,
+    prefer_first: bool = False,
+) -> tuple[str | None, list[dict], dict[str, str]]:
+    translation_unit = _translation_unit(source_text)
+    initializer = translation_unit.find_static_initializer(struct_name)
+    if initializer is None:
+        return None, [], {}
+
+    return (
+        initializer["name"],
+        initializer["fields"],
+        translation_unit.get_initializer_field_map(struct_name, prefer_first=prefer_first),
+    )
 
 
-def _build_link_type_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
+def _callback_call_sites(
+    translation_unit: c_ast.CTranslationUnit,
+    translation_profile: dict,
+    field_maps: dict[str, dict[str, str]],
+) -> dict[str, list[str]]:
+    callback_calls: dict[str, list[str]] = {}
+    for spec in _translation_callback_specs(translation_profile):
+        symbol = field_maps.get(spec["source"], {}).get(spec["field"])
+        callback_calls[spec["field"]] = _extract_call_sites(translation_unit, symbol)
+    return callback_calls
+
+
+def _generic_setup_field_writes(
+    translation_unit: c_ast.CTranslationUnit,
+    function_name: str | None,
+) -> list[dict]:
+    if not function_name:
+        return []
+    signature = translation_unit.get_function_signature(function_name)
+    if signature is None:
+        return []
+    parameters = signature.get("parameters", [])
+    if not parameters:
+        return []
+    target_name = parameters[0].get("name")
+    if not target_name:
+        return []
+    return translation_unit.find_member_assignments(function_name, target_name)
+
+
+def _build_generic_callback_tables_source_inventory(
+    profile: dict,
+    translation_unit: c_ast.CTranslationUnit,
+    module_id: str,
+) -> tuple[dict, dict[str, dict[str, str]]]:
     translation_profile = profile["translation"]
-    rtnl_initializer_name, _rtnl_body, rtnl_fields, rtnl_field_map = _extract_callback_table(
-        source_text, "rtnl_link_ops"
-    )
-    netdev_initializer_name, _netdev_body, netdev_fields, netdev_field_map = _extract_callback_table(
-        source_text, "net_device_ops"
-    )
-    ethtool_initializer_name, _ethtool_body, ethtool_fields, ethtool_field_map = _extract_callback_table(
-        source_text, "ethtool_ops"
-    )
+    analysis_profile = _profile_analysis(profile)
+    callback_tables: dict[str, dict] = {}
+    field_maps: dict[str, dict[str, str]] = {}
 
-    setup_body = _extract_function_body(source_text, rtnl_field_map.get("setup", "")) if rtnl_field_map.get("setup") else None
-    validate_body = (
-        _extract_function_body(source_text, rtnl_field_map.get("validate", ""))
-        if rtnl_field_map.get("validate")
-        else None
+    for table in analysis_profile.get("selected_callback_tables", []):
+        table_name = table.get("name")
+        if not isinstance(table_name, str):
+            continue
+        initializer = translation_unit.find_initializer_by_name(table_name)
+        if initializer is None:
+            continue
+        field_map = {
+            entry["field"]: entry["value"]
+            for entry in initializer["fields"]
+        }
+        callback_tables[table_name] = {
+            "name": table_name,
+            "type_name": table.get("type_name"),
+            "fields": initializer["fields"],
+            "field_map": field_map,
+        }
+        field_maps[table_name] = field_map
+
+    callback_calls: dict[str, list[str]] = {}
+    callback_assignment_chains: dict[str, list[dict]] = {}
+    callback_validate_checks: dict[str, list[dict]] = {}
+    setup_field_writes: list[dict] = []
+    validate_checks: list[dict] = []
+    seen_setup_writes: set[tuple[str, str, str]] = set()
+    seen_validate_checks: set[tuple[str, str]] = set()
+
+    for spec in _translation_callback_specs(translation_profile):
+        symbol = field_maps.get(spec["source"], {}).get(spec["field"])
+        callback_calls[spec["field"]] = _extract_call_sites(translation_unit, symbol)
+        callback_assignment_chains[spec["field"]] = (
+            translation_unit.find_assignment_chains(symbol) if symbol else []
+        )
+        callback_validate_checks[spec["field"]] = _extract_validate_checks(translation_unit, symbol)
+
+        if "setup" in spec["field"]:
+            for write in _generic_setup_field_writes(translation_unit, symbol):
+                key = (write["field"], write["operator"], write["value"])
+                if key in seen_setup_writes:
+                    continue
+                seen_setup_writes.add(key)
+                setup_field_writes.append(write)
+
+        if "validate" in spec["field"]:
+            for entry in callback_validate_checks[spec["field"]]:
+                key = (entry["field"], entry["return"])
+                if key in seen_validate_checks:
+                    continue
+                seen_validate_checks.add(key)
+                validate_checks.append(entry)
+
+    inventory = {
+        "private_struct_fields": [],
+        "private_structs": [],
+        "callback_tables": callback_tables,
+        "setup_field_writes": setup_field_writes,
+        "validate_checks": validate_checks,
+        "open_calls": [],
+        "open_tap_assignments": [],
+        "stop_calls": [],
+        "xmit_calls": [],
+        "stats_calls": [],
+        "callback_calls": callback_calls,
+        "callback_assignment_chains": callback_assignment_chains,
+        "callback_validate_checks": callback_validate_checks,
+        "entrypoints": analysis_profile.get("entrypoints", {}),
+        "configfs": {
+            "group_attributes": [],
+            "device_attributes": [],
+            "make_group_calls": [],
+            "drop_item_calls": [],
+            "power_show_calls": [],
+            "power_store_calls": [],
+        },
+        "blk_mq": {
+            "queue_rq_calls": [],
+            "complete_calls": [],
+        },
+    }
+    for table_name, table in callback_tables.items():
+        inventory[table_name] = table
+    return inventory, field_maps
+
+
+def _build_link_type_source_inventory(
+    profile: dict,
+    translation_unit: c_ast.CTranslationUnit,
+    module_id: str,
+) -> tuple[dict, dict[str, dict[str, str]]]:
+    translation_profile = profile["translation"]
+    rtnl_initializer_name, rtnl_fields, rtnl_field_map = _extract_callback_table(
+        translation_unit, "rtnl_link_ops"
     )
-    open_body = (
-        _extract_function_body(source_text, netdev_field_map.get("ndo_open", ""))
-        if netdev_field_map.get("ndo_open")
-        else None
+    netdev_initializer_name, netdev_fields, netdev_field_map = _extract_callback_table(
+        translation_unit, "net_device_ops"
     )
-    stop_body = (
-        _extract_function_body(source_text, netdev_field_map.get("ndo_stop", ""))
-        if netdev_field_map.get("ndo_stop")
-        else None
-    )
-    xmit_body = (
-        _extract_function_body(source_text, netdev_field_map.get("ndo_start_xmit", ""))
-        if netdev_field_map.get("ndo_start_xmit")
-        else None
-    )
-    stats_body = (
-        _extract_function_body(source_text, netdev_field_map.get("ndo_get_stats64", ""))
-        if netdev_field_map.get("ndo_get_stats64")
-        else None
+    ethtool_initializer_name, ethtool_fields, ethtool_field_map = _extract_callback_table(
+        translation_unit, "ethtool_ops"
     )
 
     field_maps = {
@@ -1288,14 +1366,8 @@ def _build_link_type_source_inventory(profile: dict, source_text: str, module_id
         "ethtool_ops": ethtool_field_map,
     }
 
-    callback_calls: dict[str, list[str]] = {}
-    for spec in _translation_callback_specs(translation_profile):
-        symbol = field_maps.get(spec["source"], {}).get(spec["field"])
-        body = _extract_function_body(source_text, symbol) if symbol else None
-        callback_calls[spec["field"]] = _extract_call_sites(body)
-
     inventory = {
-        "private_struct_fields": _extract_private_struct_fields(source_text, module_id),
+        "private_struct_fields": _extract_private_struct_fields(translation_unit, module_id),
         "callback_tables": {
             "rtnl_link_ops": {
                 "name": rtnl_initializer_name,
@@ -1313,65 +1385,78 @@ def _build_link_type_source_inventory(profile: dict, source_text: str, module_id
         "rtnl_link_ops": {
             "name": rtnl_initializer_name,
             "fields": rtnl_fields,
+            "field_map": rtnl_field_map,
         },
         "net_device_ops": {
             "name": netdev_initializer_name,
             "fields": netdev_fields,
+            "field_map": netdev_field_map,
         },
         "ethtool_ops": {
             "name": ethtool_initializer_name,
             "fields": ethtool_fields,
+            "field_map": ethtool_field_map,
         },
-        "setup_field_writes": _extract_pointer_field_assignments(setup_body, "dev->"),
-        "validate_checks": _extract_validate_checks(validate_body),
-        "open_calls": _extract_call_sites(open_body),
+        "setup_field_writes": _extract_pointer_field_assignments(
+            translation_unit,
+            rtnl_field_map.get("setup"),
+            "dev->",
+        ),
+        "validate_checks": _extract_validate_checks(
+            translation_unit,
+            rtnl_field_map.get("validate"),
+        ),
+        "open_calls": _extract_call_sites(translation_unit, netdev_field_map.get("ndo_open")),
         "open_tap_assignments": _extract_private_member_assignments(
-            open_body,
+            translation_unit,
+            netdev_field_map.get("ndo_open"),
             _private_state_source_fields(profile),
         ),
-        "stop_calls": _extract_call_sites(stop_body),
-        "xmit_calls": _extract_call_sites(xmit_body),
-        "stats_calls": _extract_call_sites(stats_body),
-        "callback_calls": callback_calls,
+        "stop_calls": _extract_call_sites(translation_unit, netdev_field_map.get("ndo_stop")),
+        "xmit_calls": _extract_call_sites(translation_unit, netdev_field_map.get("ndo_start_xmit")),
+        "stats_calls": _extract_call_sites(translation_unit, netdev_field_map.get("ndo_get_stats64")),
+        "callback_calls": _callback_call_sites(translation_unit, translation_profile, field_maps),
     }
     return inventory, field_maps
 
 
-def _build_pci_miscdevice_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
+def _build_pci_miscdevice_source_inventory(
+    profile: dict,
+    translation_unit: c_ast.CTranslationUnit,
+    module_id: str,
+) -> tuple[dict, dict[str, dict[str, str]]]:
     translation_profile = profile["translation"]
-    pci_initializer_name, _pci_body, pci_fields, pci_field_map = _extract_callback_table(source_text, "pci_driver")
-    fops_initializer_name, _fops_body, fops_fields, fops_field_map = _extract_callback_table(source_text, "file_operations")
+    pci_initializer_name, pci_fields, pci_field_map = _extract_callback_table(translation_unit, "pci_driver")
+    fops_initializer_name, fops_fields, fops_field_map = _extract_callback_table(translation_unit, "file_operations")
 
     field_maps = {
         "pci_driver": pci_field_map,
         "file_operations": fops_field_map,
     }
 
-    callback_calls: dict[str, list[str]] = {}
-    for spec in _translation_callback_specs(translation_profile):
-        symbol = field_maps.get(spec["source"], {}).get(spec["field"])
-        body = _extract_function_body(source_text, symbol) if symbol else None
-        callback_calls[spec["field"]] = _extract_call_sites(body)
-
     inventory = {
-        "private_struct_fields": _extract_private_struct_fields(source_text, module_id),
+        "private_struct_fields": _extract_private_struct_fields(translation_unit, module_id),
         "callback_tables": {
             "pci_driver": {
                 "name": pci_initializer_name,
                 "fields": pci_fields,
+                "field_map": pci_field_map,
             },
             "file_operations": {
                 "name": fops_initializer_name,
                 "fields": fops_fields,
+                "field_map": fops_field_map,
             },
         },
         "pci_driver": {
             "name": pci_initializer_name,
             "fields": pci_fields,
+            "field_map": pci_field_map,
         },
         "file_operations": {
             "name": fops_initializer_name,
             "fields": fops_fields,
+            "field_map": fops_field_map,
         },
         "setup_field_writes": [],
         "validate_checks": [],
@@ -1380,30 +1465,29 @@ def _build_pci_miscdevice_source_inventory(profile: dict, source_text: str, modu
         "stop_calls": [],
         "xmit_calls": [],
         "stats_calls": [],
-        "callback_calls": callback_calls,
+        "callback_calls": _callback_call_sites(translation_unit, translation_profile, field_maps),
     }
     return inventory, field_maps
 
 
-def _build_phy_driver_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
+def _build_phy_driver_source_inventory(
+    profile: dict,
+    translation_unit: c_ast.CTranslationUnit,
+    module_id: str,
+) -> tuple[dict, dict[str, dict[str, str]]]:
     translation_profile = profile["translation"]
-    phy_initializer_name = _find_initializer_name(source_text, "phy_driver")
-    phy_initializer_body = _extract_initializer_body(source_text, phy_initializer_name) if phy_initializer_name else None
-    phy_fields = _extract_initializer_fields(phy_initializer_body)
-    phy_field_map = _initializer_field_map(phy_initializer_body, prefer_first=True)
+    phy_initializer_name, phy_fields, phy_field_map = _extract_callback_table(
+        translation_unit,
+        "phy_driver",
+        prefer_first=True,
+    )
 
     field_maps = {
         "phy_driver": phy_field_map,
     }
 
-    callback_calls: dict[str, list[str]] = {}
-    for spec in _translation_callback_specs(translation_profile):
-        symbol = field_maps.get(spec["source"], {}).get(spec["field"])
-        body = _extract_function_body(source_text, symbol) if symbol else None
-        callback_calls[spec["field"]] = _extract_call_sites(body)
-
     inventory = {
-        "private_struct_fields": _extract_private_struct_fields(source_text, module_id),
+        "private_struct_fields": _extract_private_struct_fields(translation_unit, module_id),
         "callback_tables": {
             "phy_driver": {
                 "name": phy_initializer_name,
@@ -1423,33 +1507,33 @@ def _build_phy_driver_source_inventory(profile: dict, source_text: str, module_i
         "stop_calls": [],
         "xmit_calls": [],
         "stats_calls": [],
-        "callback_calls": callback_calls,
+        "callback_calls": _callback_call_sites(translation_unit, translation_profile, field_maps),
     }
     return inventory, field_maps
 
 
 def _build_block_null_source_inventory(
     profile: dict,
-    source_text: str,
+    translation_unit: c_ast.CTranslationUnit,
     module_id: str,
 ) -> tuple[dict, dict[str, dict[str, str]]]:
     translation_profile = profile["translation"]
-    blk_mq_initializer_name, blk_mq_body, blk_mq_fields, blk_mq_field_map = _extract_callback_table(
-        source_text, "blk_mq_ops"
+    blk_mq_initializer_name, blk_mq_fields, blk_mq_field_map = _extract_callback_table(
+        translation_unit, "blk_mq_ops"
     )
-    configfs_group_initializer_name, configfs_group_body, configfs_group_fields, configfs_group_field_map = (
-        _extract_callback_table(source_text, "configfs_group_operations")
+    configfs_group_initializer_name, configfs_group_fields, configfs_group_field_map = (
+        _extract_callback_table(translation_unit, "configfs_group_operations")
     )
-    configfs_item_initializer_name, configfs_item_body, configfs_item_fields, configfs_item_field_map = (
-        _extract_callback_table(source_text, "configfs_item_operations")
+    configfs_item_initializer_name, configfs_item_fields, configfs_item_field_map = (
+        _extract_callback_table(translation_unit, "configfs_item_operations")
     )
     private_struct_names = _profile_analysis(profile).get(
         "private_struct_names",
         ["nullb_device", "nullb", "nullb_queue", "nullb_cmd"],
     )
-    private_structs = _extract_named_structs(source_text, private_struct_names)
+    private_structs = _extract_named_structs(translation_unit, private_struct_names)
     configfs_show_map, configfs_store_map, group_attributes, device_attributes = (
-        _extract_configfs_attribute_callback_maps(source_text)
+        _extract_configfs_attribute_callback_maps(translation_unit)
     )
 
     field_maps = {
@@ -1459,35 +1543,6 @@ def _build_block_null_source_inventory(
         "configfs_show": configfs_show_map,
         "configfs_store": configfs_store_map,
     }
-
-    callback_calls: dict[str, list[str]] = {}
-    for spec in _translation_callback_specs(translation_profile):
-        symbol = field_maps.get(spec["source"], {}).get(spec["field"])
-        body = _extract_function_body(source_text, symbol) if symbol else None
-        callback_calls[spec["field"]] = _extract_call_sites(body)
-
-    make_group_body = (
-        _extract_function_body(source_text, configfs_group_field_map.get("make_group", ""))
-        if configfs_group_field_map.get("make_group")
-        else None
-    )
-    drop_item_body = (
-        _extract_function_body(source_text, configfs_group_field_map.get("drop_item", ""))
-        if configfs_group_field_map.get("drop_item")
-        else None
-    )
-    queue_rq_body = (
-        _extract_function_body(source_text, blk_mq_field_map.get("queue_rq", ""))
-        if blk_mq_field_map.get("queue_rq")
-        else None
-    )
-    complete_body = (
-        _extract_function_body(source_text, blk_mq_field_map.get("complete", ""))
-        if blk_mq_field_map.get("complete")
-        else None
-    )
-    power_store_body = _extract_function_body(source_text, configfs_store_map.get("power", ""))
-    power_show_body = _extract_function_body(source_text, configfs_show_map.get("power", ""))
 
     inventory = {
         "private_struct_fields": private_structs[0]["fields"] if private_structs else [],
@@ -1551,32 +1606,35 @@ def _build_block_null_source_inventory(
         "stop_calls": [],
         "xmit_calls": [],
         "stats_calls": [],
-        "callback_calls": callback_calls,
+        "callback_calls": _callback_call_sites(translation_unit, translation_profile, field_maps),
         "configfs": {
             "group_attributes": group_attributes,
             "device_attributes": device_attributes,
-            "make_group_calls": _extract_call_sites(make_group_body),
-            "drop_item_calls": _extract_call_sites(drop_item_body),
-            "power_show_calls": _extract_call_sites(power_show_body),
-            "power_store_calls": _extract_call_sites(power_store_body),
+            "make_group_calls": _extract_call_sites(translation_unit, configfs_group_field_map.get("make_group")),
+            "drop_item_calls": _extract_call_sites(translation_unit, configfs_group_field_map.get("drop_item")),
+            "power_show_calls": _extract_call_sites(translation_unit, configfs_show_map.get("power")),
+            "power_store_calls": _extract_call_sites(translation_unit, configfs_store_map.get("power")),
         },
         "blk_mq": {
-            "queue_rq_calls": _extract_call_sites(queue_rq_body),
-            "complete_calls": _extract_call_sites(complete_body),
+            "queue_rq_calls": _extract_call_sites(translation_unit, blk_mq_field_map.get("queue_rq")),
+            "complete_calls": _extract_call_sites(translation_unit, blk_mq_field_map.get("complete")),
         },
     }
     return inventory, field_maps
 
 
 def _build_source_inventory(profile: dict, source_text: str, module_id: str) -> tuple[dict, dict[str, dict[str, str]]]:
+    translation_unit = c_ast.CTranslationUnit(source_text)
     source_model = _profile_analysis(profile).get("source_model", "link_type_rtnl")
+    if source_model == "generic_callback_tables":
+        return _build_generic_callback_tables_source_inventory(profile, translation_unit, module_id)
     if source_model == "pci_miscdevice":
-        return _build_pci_miscdevice_source_inventory(profile, source_text, module_id)
+        return _build_pci_miscdevice_source_inventory(profile, translation_unit, module_id)
     if source_model == "phy_driver":
-        return _build_phy_driver_source_inventory(profile, source_text, module_id)
+        return _build_phy_driver_source_inventory(profile, translation_unit, module_id)
     if source_model == "block_null":
-        return _build_block_null_source_inventory(profile, source_text, module_id)
-    return _build_link_type_source_inventory(profile, source_text, module_id)
+        return _build_block_null_source_inventory(profile, translation_unit, module_id)
+    return _build_link_type_source_inventory(profile, translation_unit, module_id)
 
 
 def _driver_build_targets(context: dict, kbuild_plan: dict) -> tuple[str, str]:
@@ -1592,12 +1650,14 @@ def build_kbuild_plan(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -1733,12 +1793,14 @@ def build_binding_gap_audit(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -1757,9 +1819,10 @@ def build_binding_gap_audit(
     helper_includes = set(_extract_includes(bindings_helper_text))
     missing_headers = [header for header in public_includes if header not in helper_includes]
     existing_headers = [header for header in public_includes if header in helper_includes]
+    called_functions = _all_call_sites(source_text)
 
     direct_ffi_symbols = [
-        symbol for symbol in direct_ffi_candidates if re.search(rf"\b{symbol}\s*\(", source_text)
+        symbol for symbol in direct_ffi_candidates if symbol in called_functions
     ]
     helper_gap_symbols = _helper_symbols_used(source_text, helper_wrapper_candidates)
 
@@ -1821,12 +1884,14 @@ def build_external_header_plan(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -1840,6 +1905,7 @@ def build_external_header_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
 
@@ -1925,12 +1991,14 @@ def build_helper_audit(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -1979,12 +2047,14 @@ def build_kbuild_patch_plan(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -1995,6 +2065,7 @@ def build_kbuild_patch_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     makefile = _path_from_repo(repo, kbuild_plan["makefile_path"])
@@ -2120,12 +2191,14 @@ def build_bindings_patch_plan(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -2137,6 +2210,7 @@ def build_bindings_patch_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     bindings_helper = _path_from_repo(repo, audit["bindings_helper_path"])
@@ -2212,12 +2286,14 @@ def build_helpers_patch_plan(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -2228,6 +2304,7 @@ def build_helpers_patch_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     helpers_aggregate = _path_from_root(repo, helper_audit["helper_aggregate_path"])
@@ -2461,12 +2538,14 @@ def build_abstraction_plan(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -2483,6 +2562,7 @@ def build_abstraction_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     helper_audit = build_helper_audit(
@@ -2490,6 +2570,7 @@ def build_abstraction_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     command_semantics = build_command_semantics(
@@ -2497,6 +2578,7 @@ def build_abstraction_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     external_header_plan = build_external_header_plan(
@@ -2504,6 +2586,7 @@ def build_abstraction_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     kbuild_patch_plan = build_kbuild_patch_plan(
@@ -2511,6 +2594,7 @@ def build_abstraction_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     bindings_patch_plan = build_bindings_patch_plan(
@@ -2518,6 +2602,7 @@ def build_abstraction_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     helpers_patch_plan = build_helpers_patch_plan(
@@ -2525,6 +2610,7 @@ def build_abstraction_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
 
@@ -2714,12 +2800,14 @@ def build_translation_plan(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -2733,6 +2821,7 @@ def build_translation_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     unsafe_plan = build_unsafe_obligations(
@@ -2740,6 +2829,7 @@ def build_translation_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     command_semantics = build_command_semantics(
@@ -2747,6 +2837,7 @@ def build_translation_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     external_header_plan = build_external_header_plan(
@@ -2754,6 +2845,7 @@ def build_translation_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     kbuild_patch_plan = build_kbuild_patch_plan(
@@ -2761,6 +2853,7 @@ def build_translation_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     bindings_patch_plan = build_bindings_patch_plan(
@@ -2768,6 +2861,7 @@ def build_translation_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     helpers_patch_plan = build_helpers_patch_plan(
@@ -2775,6 +2869,7 @@ def build_translation_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     inventory = abstraction_plan["source_inventory"]
@@ -3006,12 +3101,14 @@ def build_command_semantics(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -3053,12 +3150,14 @@ def build_unsafe_obligations(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -3069,6 +3168,7 @@ def build_unsafe_obligations(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     module_id = abstraction_plan["module_id"]
@@ -3141,12 +3241,14 @@ def build_safety_policy(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -3158,6 +3260,7 @@ def build_safety_policy(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     translation_plan = build_translation_plan(
@@ -3165,6 +3268,7 @@ def build_safety_policy(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
 
@@ -3258,12 +3362,14 @@ def build_soundness_discharge(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -3274,6 +3380,7 @@ def build_soundness_discharge(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     command_semantics = build_command_semantics(
@@ -3281,6 +3388,7 @@ def build_soundness_discharge(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     command_semantics = build_command_semantics(
@@ -3288,6 +3396,7 @@ def build_soundness_discharge(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     unsafe_plan = build_unsafe_obligations(
@@ -3295,6 +3404,7 @@ def build_soundness_discharge(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     allowlisted_files = safety_policy["abstraction_policy"]["allowlisted_files"]
@@ -3451,12 +3561,14 @@ def build_agent_workflow_plan(
     repo_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
     profile_id: str | None = None,
+    profile_path: str | Path | None = None,
     source_tree: str | Path | None = None,
 ) -> dict:
     context = resolve_module_context(
         module_path,
         repo_root=repo_root,
         profile_id=profile_id,
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     repo = context["repo_root"]
@@ -3468,6 +3580,7 @@ def build_agent_workflow_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     translation_plan = build_translation_plan(
@@ -3475,6 +3588,7 @@ def build_agent_workflow_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     safety_policy = build_safety_policy(
@@ -3482,6 +3596,7 @@ def build_agent_workflow_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     command_semantics = build_command_semantics(
@@ -3489,6 +3604,7 @@ def build_agent_workflow_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     module_lifecycle_config = module_lifecycle_config_requirements(
@@ -3496,6 +3612,7 @@ def build_agent_workflow_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
     kbuild_plan = build_kbuild_plan(
@@ -3503,6 +3620,7 @@ def build_agent_workflow_plan(
         repo_root=repo,
         artifact_root=artifact_root,
         profile_id=profile["profile_id"],
+        profile_path=profile_path,
         source_tree=source_tree,
     )
 

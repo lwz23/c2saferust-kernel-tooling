@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "profile_type": "c2saferust-family-profile",
+  "family_id": "generic-unknown",
+  "template_id": "generic_unknown_rules",
+  "signature_structs": [],
+  "helper_wrapper_candidates": {},
+  "direct_ffi_candidates": {},
+  "default_binding_header_decision": {
+    "action": "manual_review",
+    "reason": "Unknown subsystem headers need explicit review before bindgen or abstraction claims are made.",
+    "required_symbols": [],
+    "mvp_blocking": true
+  },
+  "default_external_header_decision": {
+    "action": "manual_review",
+    "reason": "Unknown subsystem private headers need an explicit landing or omission decision before codegen claims are made.",
+    "required_symbols": [],
+    "mvp_blocking": true
+  },
+  "bindings_header_decisions": {},
+  "implemented_rust_modules": {
+    "mvp": {},
+    "post_mvp": {}
+  },
+  "abstraction_requirements": {},
+  "translation": {
+    "deferred_callback_default": {
+      "status": "deferred",
+      "rust_surface": null,
+      "body_plan": [
+        "Keep this callback in manual-review territory until the subsystem earns a dedicated family profile and abstraction contract."
+      ]
+    }
+  },
+  "oracle": {
+    "runner": "qemu-module-lifecycle"
+  }
+}

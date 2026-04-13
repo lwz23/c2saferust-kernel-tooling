@@ -127,6 +127,7 @@ static void nlmon_unregister(void)
         (root / "drivers" / "net" / "Makefile").write_text(
             "obj-$(CONFIG_NLMON) += nlmon.o\n"
             "obj-$(CONFIG_VSOCKMON) += vsockmon.o\n"
+            "obj-$(CONFIG_DUMMY) += dummy.o\n"
         )
         (root / "drivers" / "net" / "Kconfig").write_text(
             'config NLMON\n'
@@ -138,6 +139,11 @@ static void nlmon_unregister(void)
             '\ttristate "Virtual vsock monitoring device"\n'
             '\thelp\n'
             '\t  Sample vsockmon entry.\n'
+            '\n'
+            'config DUMMY\n'
+            '\ttristate "Dummy network driver"\n'
+            '\thelp\n'
+            '\t  Sample dummy entry.\n'
             '\n'
             'config NETKIT\n'
             '\tbool "Sample next symbol"\n'
@@ -237,6 +243,136 @@ static void vsockmon_unregister(void)
 {
 \trtnl_link_unregister(&vsockmon_link_ops);
 }
+"""
+        )
+        (root / "drivers" / "net" / "dummy.c").write_text(
+            """// SPDX-License-Identifier: GPL-2.0-only
+#include <linux/ethtool.h>
+#include <linux/etherdevice.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/netdevice.h>
+#include <net/rtnetlink.h>
+
+#define DRV_NAME "dummy"
+
+static netdev_tx_t dummy_xmit(struct sk_buff *skb, struct net_device *dev)
+{
+\tdev_lstats_add(dev, skb->len);
+\tskb_tx_timestamp(skb);
+\tdev_kfree_skb(skb);
+\treturn NETDEV_TX_OK;
+}
+
+static int dummy_dev_init(struct net_device *dev)
+{
+\tdev->pcpu_stat_type = NETDEV_PCPU_STAT_LSTATS;
+\treturn 0;
+}
+
+static void set_multicast_list(struct net_device *dev)
+{
+\t(void)dev;
+}
+
+static int dummy_change_carrier(struct net_device *dev, bool new_carrier)
+{
+\tif (new_carrier)
+\t\tnetif_carrier_on(dev);
+\telse
+\t\tnetif_carrier_off(dev);
+\treturn 0;
+}
+
+static void dummy_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
+{
+\tdev_lstats_read(dev, &stats->tx_packets, &stats->tx_bytes);
+}
+
+static int dummy_get_ts_info(struct net_device *dev, struct kernel_ethtool_ts_info *info)
+{
+\treturn ethtool_op_get_ts_info(dev, info);
+}
+
+static const struct ethtool_ops dummy_ethtool_ops = {
+\t.get_ts_info = dummy_get_ts_info,
+};
+
+static const struct net_device_ops dummy_netdev_ops = {
+\t.ndo_init = dummy_dev_init,
+\t.ndo_start_xmit = dummy_xmit,
+\t.ndo_validate_addr = eth_validate_addr,
+\t.ndo_set_rx_mode = set_multicast_list,
+\t.ndo_set_mac_address = eth_mac_addr,
+\t.ndo_get_stats64 = dummy_get_stats64,
+\t.ndo_change_carrier = dummy_change_carrier,
+};
+
+static void dummy_setup(struct net_device *dev)
+{
+\tether_setup(dev);
+\tdev->netdev_ops = &dummy_netdev_ops;
+\tdev->ethtool_ops = &dummy_ethtool_ops;
+\tdev->needs_free_netdev = true;
+\tdev->request_ops_lock = true;
+\tdev->flags |= IFF_NOARP;
+\tdev->flags &= ~IFF_MULTICAST;
+\tdev->priv_flags |= IFF_LIVE_ADDR_CHANGE | IFF_NO_QUEUE;
+\tdev->lltx = true;
+\tdev->features |= NETIF_F_SG | NETIF_F_FRAGLIST;
+\tdev->features |= NETIF_F_GSO_SOFTWARE;
+\tdev->features |= NETIF_F_HW_CSUM | NETIF_F_HIGHDMA;
+\tdev->features |= NETIF_F_GSO_ENCAP_ALL;
+\tdev->hw_features |= dev->features;
+\tdev->hw_enc_features |= dev->features;
+\teth_hw_addr_random(dev);
+\tdev->min_mtu = 0;
+\tdev->max_mtu = 0;
+}
+
+static int dummy_validate(struct nlattr *tb[], struct nlattr *data[],
+\t\t\t  struct netlink_ext_ack *extack)
+{
+\tif (tb[IFLA_ADDRESS]) {
+\t\tif (nla_len(tb[IFLA_ADDRESS]) != ETH_ALEN)
+\t\t\treturn -EINVAL;
+\t\tif (!is_valid_ether_addr(nla_data(tb[IFLA_ADDRESS])))
+\t\t\treturn -EADDRNOTAVAIL;
+\t}
+\treturn 0;
+}
+
+static struct rtnl_link_ops dummy_link_ops __read_mostly = {
+\t.kind = DRV_NAME,
+\t.setup = dummy_setup,
+\t.validate = dummy_validate,
+};
+
+module_param(numdummies, int, 0);
+
+static int __init dummy_init_one(void)
+{
+\tstruct net_device *dev_dummy;
+
+\tdev_dummy = alloc_netdev(0, "dummy%d", NET_NAME_ENUM, dummy_setup);
+\tif (!dev_dummy)
+\t\treturn -ENOMEM;
+\tdev_dummy->rtnl_link_ops = &dummy_link_ops;
+\treturn register_netdevice(dev_dummy);
+}
+
+static int __init dummy_init_module(void)
+{
+\treturn rtnl_link_register(&dummy_link_ops);
+}
+
+static void __exit dummy_cleanup_module(void)
+{
+\trtnl_link_unregister(&dummy_link_ops);
+}
+
+module_init(dummy_init_module);
+module_exit(dummy_cleanup_module);
 """
         )
         (root / "drivers" / "net" / "phy").mkdir(parents=True, exist_ok=True)
@@ -417,6 +553,51 @@ module_phy_driver(asix_driver);
             "    pub fn copy_from_user_slice(&mut self) -> Result { Ok(()) }\n"
             "    pub fn fill_zero(&mut self, offset: usize, len: usize) -> Result { let _ = (offset, len); Ok(()) }\n"
             "}\n"
+        )
+
+    def _build_watchdog_sample_root(self, root: Path) -> None:
+        (root / "drivers" / "watchdog").mkdir(parents=True, exist_ok=True)
+        (root / "drivers" / "watchdog" / "Makefile").write_text(
+            "obj-$(CONFIG_SOFT_WATCHDOG) += softdog.o\n"
+        )
+        (root / "drivers" / "watchdog" / "Kconfig").write_text(
+            "config SOFT_WATCHDOG\n"
+            '\ttristate "Software watchdog"\n'
+            "\thelp\n"
+            "\t  Sample softdog entry.\n"
+        )
+        (root / "drivers" / "watchdog" / "softdog.c").write_text(
+            """// SPDX-License-Identifier: GPL-2.0-only
+#include <linux/module.h>
+#include <linux/watchdog.h>
+
+static int softdog_start(struct watchdog_device *wdd)
+{
+\t(void)wdd;
+\treturn 0;
+}
+
+static int softdog_stop(struct watchdog_device *wdd)
+{
+\t(void)wdd;
+\treturn 0;
+}
+
+static const struct watchdog_ops softdog_ops = {
+\t.start = softdog_start,
+\t.stop = softdog_stop,
+};
+
+static struct watchdog_device softdog_dev = {
+\t.ops = &softdog_ops,
+};
+
+static int __init softdog_init(void)
+{
+\treturn watchdog_register_device(&softdog_dev);
+}
+module_init(softdog_init);
+"""
         )
 
     def _build_external_goldfish_source(self, root: Path) -> Path:
@@ -1770,6 +1951,156 @@ const GOLDFISH_AS_INVALID_HANDLE: u32 = u32::MAX;
             self.assertIn("blocksize", abstraction["source_inventory"]["configfs"]["device_attributes"])
             self.assertEqual(workflow_plan["driver_object_path"], "drivers/block/rnull/rnull_mod.o")
             self.assertEqual(workflow_plan["driver_module_path"], "drivers/block/rnull/rnull_mod.ko")
+
+    def test_refresh_artifacts_supports_dummy_ast_eval_profile(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_sample_root(root)
+            output_dir = root / "Documentation" / "rust" / "c2saferust" / "dummy_ast_eval"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(self.SCRIPT_PATH),
+                    "refresh-artifacts",
+                    "--repo-root",
+                    str(root),
+                    "--profile-id",
+                    "dummy_ast_eval",
+                    "--output-dir",
+                    str(output_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["module_id"], "dummy")
+            self.assertIn(
+                "Documentation/rust/c2saferust/dummy_ast_eval/abstraction-plan.json",
+                payload["generated_artifacts"],
+            )
+
+            abstraction = json.loads((output_dir / "abstraction-plan.json").read_text())
+            source_inventory = abstraction["source_inventory"]
+            self.assertEqual(source_inventory["rtnl_link_ops"]["field_map"]["setup"], "dummy_setup")
+            self.assertEqual(source_inventory["rtnl_link_ops"]["field_map"]["validate"], "dummy_validate")
+            self.assertEqual(source_inventory["net_device_ops"]["field_map"]["ndo_init"], "dummy_dev_init")
+            self.assertEqual(source_inventory["net_device_ops"]["field_map"]["ndo_start_xmit"], "dummy_xmit")
+            self.assertEqual(source_inventory["net_device_ops"]["field_map"]["ndo_get_stats64"], "dummy_get_stats64")
+            self.assertEqual(source_inventory["net_device_ops"]["field_map"]["ndo_change_carrier"], "dummy_change_carrier")
+            self.assertEqual(source_inventory["net_device_ops"]["field_map"]["ndo_validate_addr"], "eth_validate_addr")
+            self.assertEqual(source_inventory["net_device_ops"]["field_map"]["ndo_set_rx_mode"], "set_multicast_list")
+            self.assertEqual(source_inventory["net_device_ops"]["field_map"]["ndo_set_mac_address"], "eth_mac_addr")
+            self.assertEqual(source_inventory["ethtool_ops"]["field_map"]["get_ts_info"], "dummy_get_ts_info")
+            self.assertIn(
+                {"field": "flags", "operator": "&=", "value": "~IFF_MULTICAST"},
+                source_inventory["setup_field_writes"],
+            )
+            self.assertEqual(
+                {(entry["field"], entry["return"]) for entry in source_inventory["validate_checks"]},
+                {
+                    ("IFLA_ADDRESS", "-EINVAL"),
+                    ("IFLA_ADDRESS", "-EADDRNOTAVAIL"),
+                },
+            )
+            self.assertIn("dev_lstats_add", source_inventory["xmit_calls"])
+            self.assertIn("skb_tx_timestamp", source_inventory["xmit_calls"])
+            self.assertIn("dev_kfree_skb", source_inventory["xmit_calls"])
+            self.assertIn("dev_lstats_add", source_inventory["callback_calls"]["ndo_start_xmit"])
+
+    def test_auto_process_detects_dummy_known_family(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_sample_root(root)
+            output_dir = root / "Documentation" / "rust" / "c2saferust" / "dummy_auto"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(self.SCRIPT_PATH),
+                    "auto-process",
+                    "--repo-root",
+                    str(root),
+                    "--module-path",
+                    "drivers/net/dummy.c",
+                    "--output-dir",
+                    str(output_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            manifest = json.loads(result.stdout)
+            self.assertEqual(manifest["artifact_type"], "auto-process-manifest")
+            self.assertEqual(manifest["selected_family_id"], "net-link-type")
+            self.assertEqual(manifest["selection_mode"], "known-family")
+            self.assertIn("Documentation/rust/c2saferust/dummy_auto/auto-profile.json", manifest["generated_artifacts"])
+            self.assertIn("Documentation/rust/c2saferust/dummy_auto/abstraction-plan.json", manifest["generated_artifacts"])
+
+            report = json.loads((output_dir / "auto-profile-report.json").read_text())
+            abstraction = json.loads((output_dir / "abstraction-plan.json").read_text())
+            self.assertIn("dummy_init_module", report["entry_functions"])
+            self.assertTrue(
+                {"rtnl_link_ops", "net_device_ops"}.issubset(
+                    {entry["type_name"] for entry in report["candidate_tables"]}
+                )
+            )
+            required_fields = {entry["field"] for entry in report["required_callback_fields"]}
+            self.assertTrue({"setup", "validate", "ndo_start_xmit"}.issubset(required_fields))
+            self.assertEqual(
+                abstraction["source_inventory"]["rtnl_link_ops"]["field_map"]["setup"],
+                "dummy_setup",
+            )
+            self.assertEqual(
+                abstraction["source_inventory"]["net_device_ops"]["field_map"]["ndo_start_xmit"],
+                "dummy_xmit",
+            )
+
+    def test_auto_process_falls_back_on_unknown_watchdog_family(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._build_sample_root(root)
+            self._build_watchdog_sample_root(root)
+            output_dir = root / "Documentation" / "rust" / "c2saferust" / "softdog_auto"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(self.SCRIPT_PATH),
+                    "auto-process",
+                    "--repo-root",
+                    str(root),
+                    "--module-path",
+                    "drivers/watchdog/softdog.c",
+                    "--output-dir",
+                    str(output_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            manifest = json.loads(result.stdout)
+            self.assertEqual(manifest["selected_family_id"], "generic-unknown")
+            self.assertEqual(manifest["selection_mode"], "generic-unknown")
+
+            report = json.loads((output_dir / "auto-profile-report.json").read_text())
+            abstraction = json.loads((output_dir / "abstraction-plan.json").read_text())
+            self.assertIn("softdog_init", report["entry_functions"])
+            self.assertIn("softdog_ops", {entry["name"] for entry in report["candidate_tables"]})
+            self.assertEqual(
+                {entry["field"] for entry in report["required_callback_fields"]},
+                {"start", "stop"},
+            )
+            self.assertIn("softdog_ops", abstraction["source_inventory"]["callback_tables"])
+            self.assertIn("start", abstraction["source_inventory"]["callback_calls"])
+            self.assertIn("stop", abstraction["source_inventory"]["callback_calls"])
 
     def test_configfs_lifecycle_runner_reports_blocked_when_subsystem_missing(self):
         with tempfile.TemporaryDirectory() as temp_dir:

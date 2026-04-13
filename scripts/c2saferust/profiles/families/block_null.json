@@ -3,6 +3,11 @@
   "profile_type": "c2saferust-family-profile",
   "family_id": "block-null",
   "template_id": "block_null_rules",
+  "signature_structs": [
+    "blk_mq_ops",
+    "configfs_group_operations",
+    "configfs_item_operations"
+  ],
   "helper_wrapper_candidates": {},
   "direct_ffi_candidates": {},
   "default_binding_header_decision": {
