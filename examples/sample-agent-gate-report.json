@@ -1,0 +1,16 @@
+{
+  "schema": "c2saferust.agent-gate-report.v0",
+  "module_id": "nlmon",
+  "module_path": "drivers/net/nlmon.c",
+  "family": "net-link-type",
+  "verdict": "block",
+  "reasons": [
+    "candidate driver references bindings::* directly",
+    "soundness obligations missing for netdev lifetime"
+  ],
+  "required_next": [
+    "extend abstraction instead of adding driver-side unsafe",
+    "refresh planning/safety artifacts then re-run gate-agent-candidate"
+  ],
+  "notes": "Illustrative sample for reviewers; not produced from a live kernel tree in this commit."
+}

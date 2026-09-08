@@ -1,5 +1,24 @@
 # C2SafeRust Kernel Tooling
 
+Local-first tooling for **Linux / Rust-for-Linux** driver migration safety gates.
+
+This repository does **not** carry Linux kernel sources. It operates on an **external** kernel tree:
+
+- Read target module C sources
+- Emit structured **planning / safety / oracle** artifacts
+- Constrain abstraction expansion and Rust driver generation
+- Write artifacts back beside the target tree by default
+
+It is **not** a general C→Rust translator. It targets:
+
+- Linux kernel drivers
+- Rust-for-Linux abstraction-first migration
+- Closed loops where `unsafe` / soundness / smoke oracles are artifact-constrained
+
+**English reviewer pack (10 minutes):** [docs/reviewer-10min.md](docs/reviewer-10min.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [examples/sample-agent-gate-report.json](examples/sample-agent-gate-report.json)
+
+---
+
 `C2SafeRust Kernel Tooling` 是一个面向 Linux kernel / Rust-for-Linux 的独立工具仓库。
 
 它不携带 Linux 内核源码本身，而是面向外部目标 kernel tree 工作：
@@ -25,6 +44,10 @@
   - 为什么可以拆成独立工具仓库，以及边界怎么划分
 - `docs/tooling-abstraction-retrospective.md`
   - 当前工具化抽象工作的复盘
+- `docs/reviewer-10min.md`
+  - grant / external reviewer 10-minute path
+- `examples/sample-agent-gate-report.json`
+  - illustrative agent-gate report shape
 
 ## Working Model
 
@@ -132,7 +155,7 @@ python3 $TOOL_REPO/scripts/c2saferust/tool_cli.py apply-oracle-feedback \
 
 ## Self Test
 
-仓库自身的快速回归：
+仓库自身的快速回归（不需要完整产品内核树即可跑单元测试）：
 
 ```bash
 python3 -m py_compile scripts/c2saferust/*.py
@@ -151,3 +174,5 @@ python3 -m unittest scripts.c2saferust.tests.test_tool_cli
 - [docs/new-module-checklist.md](docs/new-module-checklist.md)
 - [docs/standalone-tool-repo.md](docs/standalone-tool-repo.md)
 - [docs/tooling-abstraction-retrospective.md](docs/tooling-abstraction-retrospective.md)
+- [docs/reviewer-10min.md](docs/reviewer-10min.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
